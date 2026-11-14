@@ -3,6 +3,7 @@ import collections
 import json
 import logging
 import queue
+import threading
 import re
 import time
 
@@ -40,8 +41,11 @@ class Ears:
         if hasattr(self.model, "find_word"):  # vosk >= 0.3.45; older versions just log a warning
             grammar = [w for w in grammar if all(self.model.find_word(x) >= 0 for x in w.split())]
         self.wake = KaldiRecognizer(self.model, RATE, json.dumps(grammar + ["[unk]"]))
+        self.cancel = threading.Event()  # "stop" while recording: end the recording now
         self.spotter = None  # the dedicated "Batsy" keyword spotter (batsy/voice/wake.py); Vosk is the fallback
-        self.wake_source = None  # which one fired last: "kws" (precise, answer at once) or "vosk" (check first)
+        self.wake_source = None  # which fired last: "personal", "kws" (answer at once) or "vosk" (check first)
+        self.personal = None  # trained on your own "Batsy"s (batsy/voice/personal.py)
+        self.load_personal()
         try:
             from batsy.voice import wake
 
@@ -50,6 +54,7 @@ class Ears:
         except Exception as e:
             log.warning("keyword spotter unavailable (%s); using Vosk only", e)
         self.q: queue.Queue[bytes] = queue.Queue()
+        self.taps: list[queue.Queue[bytes]] = []  # other listeners' own copy of every frame (the kill word)
         self.history = collections.deque(maxlen=FRAMES_PER_SEC * 3)  # pre-roll buffer
         # Background level = a low percentile of the last few seconds, so it follows the room both ways
         # (a fan spinning up must raise it, or every frame looks like speech and recording never ends).
@@ -69,7 +74,19 @@ class Ears:
 
     def _callback(self, indata, frames, time_info, status):
         self.last_frame = time.monotonic()
-        self.q.put(bytes(indata))
+        frame = bytes(indata)
+        self.q.put(frame)
+        for tap in self.taps:
+            try:
+                tap.put_nowait(frame)
+            except queue.Full:  # that listener fell behind: never hold up the microphone
+                pass
+
+    def tap(self) -> queue.Queue[bytes]:
+        """A queue that gets every frame too, without taking any from the voice loop."""
+        q: queue.Queue[bytes] = queue.Queue(maxsize=FRAMES_PER_SEC * 5)
+        self.taps.append(q)
+        return q
 
     def start(self) -> None:
         self.stream.start()
@@ -116,6 +133,8 @@ class Ears:
         self.wake.Reset()
         if self.spotter is not None:
             self.spotter.reset()
+        if self.personal is not None:
+            self.personal.reset()
 
     def read(self, timeout: float = 0.5) -> bytes | None:
         try:
@@ -135,9 +154,22 @@ class Ears:
         text = " " + text.lower() + " "
         return any(f" {w} " in text for w in self.wake_words)
 
+    def load_personal(self) -> None:
+        from batsy.voice import personal
+
+        try:
+            self.personal = personal.Detector() if personal.available() else None
+        except Exception as e:
+            log.warning("personal wake model unusable (%s)", e)
+            self.personal = None
+
     def wake_hit(self, frame: bytes, strict: bool = False) -> bool:
         """Feed a frame to the wake spotter. strict=True waits for a finished phrase (fewer false hits,
         used while Batsy is talking)."""
+        if self.personal is not None and self.personal.hit(frame):
+            self.wake.Reset()
+            self.wake_source = "personal"
+            return True
         if self.spotter is not None and self.spotter.hit(frame):
             self.wake.Reset()
             self.wake_source = "kws"
@@ -176,8 +208,12 @@ class Ears:
         end_silence = end_silence or self.cfg.get("voice.end_silence")
         thresh = self.threshold()
         started, silent, waited, total, spoken = False, 0, 0, 0, 0
+        self.cancel.clear()
         while total < max_seconds * FRAMES_PER_SEC:
             frame = self.read(timeout=1.0)
+            if self.cancel.is_set():  # "stop" pressed: drop this recording
+                self.cancel.clear()
+                return None
             if frame is None:
                 continue
             frames.append(frame)
@@ -206,26 +242,34 @@ class Ears:
 
 
 # How speech recognizers (Parakeet especially) spell "Batsy". Only used to confirm a wake word Vosk already
-# spotted, never to wake Batsy, so everyday phrases like "that's it" can't start a conversation on their own.
+# spotted, never to wake Batsy. Vosk fires on almost any speech, so this check is what really decides. "That's it"
+# is how Parakeet often hears you; it only counts as the first words (see strip_wake_word).
 TRANSCRIPT_ALIASES = ["thats it", "thatsy", "matty", "matsy", "latzy", "lattsy", "patsy", "batty", "baxy", "bassy",
                       "betsy", "bitsy", "pasty"]
+# What may come before the wake word: "hey Batsy", "okay Batsy", "um, Batsy".
+LEAD_INS = {"hey", "hi", "hello", "ok", "okay", "oh", "ah", "yo", "um", "uh", "so"}
 
 
 def strip_wake_word(text: str, wake_words: list[str]) -> tuple[bool, str]:
-    """Find the wake word near the start of a transcript. Returns (found, rest_of_command)."""
+    """Find the wake word at the start of a transcript. Returns (found, rest_of_command)."""
     import difflib
 
     words = text.split()
     norm = [re.sub(r"[^a-z]", "", w.lower()) for w in words]
-    targets = [(w.replace(" ", ""), 0.7) for w in wake_words]
-    # Recogniser spellings only count when nearly exact: "that" must not pass for "that's it".
+    # 0.85: "batsee" for "bat see" passes; "but see" (0.83) and "bet so" (0.8) don't.
+    targets = [(w.replace(" ", ""), 0.85) for w in wake_words]
+    # Recogniser spellings only count when nearly exact: "that" must not pass for "thatsy".
     targets += [(w.replace(" ", ""), 0.86) for w in TRANSCRIPT_ALIASES]
 
     def score(cand: str) -> float:
-        """How far past its own threshold the best target is (>= 0 means it's the wake word)."""
-        return max(difflib.SequenceMatcher(None, cand, t).ratio() - need for t, need in targets) if cand else -1.0
+        """How far past its own threshold the best target is (>= 0 means it's the wake word). A shorter word never
+        counts, or "it's" passes for "bitsy" and "bats"/"pats"/"bits" for "batsy"; one letter longer may."""
+        return max((difflib.SequenceMatcher(None, cand, t).ratio() - need for t, need in targets
+                    if len(t) <= len(cand) <= len(t) + 1), default=-1.0) if cand else -1.0
 
-    for i in range(min(len(words), 5)):
+    for i in range(min(len(words), 3)):
+        if i and norm[i - 1] not in LEAD_INS:  # "Then as such it's ..." isn't calling Batsy
+            break
         # Take two words only when they match better than one ("bat see"), not "Batsy, what" -> "batsywhat".
         best, span = max((score("".join(norm[i:i + n])), -n) for n in (1, 2))
         if best >= 0:

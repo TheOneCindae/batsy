@@ -182,3 +182,91 @@ body.saver #esc, body.saver #talk, body.saver #stage, body.saver #subtitle { dis
   #saver, .eq i, #status.busy .ind i { animation: none; }
   body { transition: none; }
 }
+
+/* --- showcase: "show what you can do" — a live dashboard beside the capability tiles (batsy/showcase.py) ---- */
+#showcase { position: fixed; left: 4vw; right: 4vw; top: 13vh; bottom: 17vh; display: grid;
+  grid-template-columns: minmax(300px, 0.85fr) 1.35fr; gap: 3.2vw; --heat: var(--signal); }
+#showcase > header { position: fixed; right: 4vw; top: 5.2vh; display: flex; align-items: baseline; gap: 22px; }
+#showcase h1 { font: 700 40px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--signal);
+  text-shadow: 0 0 24px rgba(255, 194, 14, .35); }
+#showcase h1 span { font-weight: 500; font-size: 22px; letter-spacing: .08em; color: var(--steel); margin-left: 10px; }
+#showcase .meta { display: flex; align-items: center; gap: 8px; font: 600 16px/1 var(--display); letter-spacing: .1em;
+  color: var(--steel); text-transform: uppercase; font-variant-numeric: tabular-nums; }
+#showcase .rec { width: 9px; height: 9px; border-radius: 50%; background: var(--alarm); animation: rec 1.6s ease-in-out infinite; }
+@keyframes rec { 50% { opacity: .25; } }
+
+#showcase .live { display: flex; flex-direction: column; gap: 14px; min-height: 0; padding: 22px 24px;
+  background: rgba(10, 12, 16, .86); border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255, 194, 14, .18);
+  animation: rise .7s cubic-bezier(.2, .8, .2, 1) backwards; }
+#showcase .dial { position: relative; flex: 1 1 0; min-height: 150px; max-width: 100%; aspect-ratio: 1; align-self: center;
+  container-type: size; }
+#showcase .live > :not(.dial) { flex-shrink: 0; }  /* the dial gives up space first */
+#showcase .dial svg { width: 100%; height: 100%; overflow: visible; }
+#showcase .dial .halo { transition: opacity .8s; }
+#showcase .ticks line { stroke: var(--steel-dim); stroke-width: 1.4; }
+#showcase .ticks line.major { stroke: var(--steel); stroke-width: 2.4; }
+#showcase .ticks text { fill: var(--steel-dim); font: 600 11px var(--display); text-anchor: middle; dominant-baseline: middle; }
+#showcase .track { fill: none; stroke: rgba(255, 255, 255, .07); stroke-width: 14; stroke-linecap: round; }
+#showcase .value { fill: none; stroke: url(#heat); stroke-width: 14; stroke-linecap: round;
+  filter: drop-shadow(0 0 8px var(--heat)); transition: stroke-dashoffset .9s cubic-bezier(.3, .7, .2, 1); }
+#showcase .limit { fill: none; stroke: var(--alarm); stroke-width: 3; stroke-dasharray: 3 4; opacity: .8; }
+#showcase .sweep { transform-origin: 120px 120px; animation: sweep 5s linear infinite; }
+#showcase .sweep line { stroke: var(--heat); stroke-width: 1.5; opacity: .35; }
+@keyframes sweep { to { transform: rotate(360deg); } }
+#showcase .read { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; pointer-events: none; }
+#showcase .read .t { font: 700 27cqw/1 var(--display); color: var(--bone);
+  font-variant-numeric: tabular-nums; text-shadow: 0 0 30px var(--heat); }
+#showcase .read small { font: 600 7cqw/1 var(--display); color: var(--heat); margin-top: -4px; }
+#showcase .read .what { margin-top: 3cqw; font: 600 5.2cqw/1 var(--display); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--steel); }
+#showcase .read .hot { margin-top: 2cqw; font: 500 5.2cqw/1 var(--display); letter-spacing: .06em; color: var(--steel-dim); }
+
+#showcase .trace { width: 100%; height: 7vh; min-height: 40px; overflow: visible; }
+#showcase .trace .line { fill: none; stroke: var(--heat); stroke-width: 2; vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 4px var(--heat)); }
+#showcase .trace .area { fill: var(--heat); opacity: .12; }
+#showcase .trace .lim { stroke: var(--alarm); stroke-dasharray: 4 5; stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .7; }
+#showcase .trace-label { display: flex; justify-content: space-between; margin-top: -8px;
+  font: 500 13px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--steel-dim); }
+
+#showcase .cores { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 10px; height: 10vh; min-height: 60px; }
+#showcase .core { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+#showcase .core .bar { flex: 1; width: 100%; max-width: 46px; border-radius: 3px; background: rgba(255, 255, 255, .06);
+  position: relative; overflow: hidden; }
+#showcase .core .bar i { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 3px;
+  background: linear-gradient(to top, #ffc20e, var(--c, #ffc20e)); transition: height .8s cubic-bezier(.3, .7, .2, 1); }
+#showcase .core b { font: 600 15px/1 var(--display); color: var(--bone); font-variant-numeric: tabular-nums; }
+#showcase .core span { font: 500 12px/1 var(--display); color: var(--steel-dim); letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+
+#showcase .chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+#showcase .chips div { padding: 9px 12px; border-radius: 4px; background: rgba(255, 255, 255, .04); }
+#showcase .chips dt { font: 600 12px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--steel-dim); }
+#showcase .chips dd { margin-top: 5px; font: 600 21px/1 var(--display); color: var(--bone); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#showcase .tiles { list-style: none; display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 14px; min-height: 0; }
+#showcase .tile { position: relative; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 18px;
+  padding: 14px 20px; border-radius: 6px; background: rgba(12, 14, 19, .82); overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06); opacity: .38; filter: saturate(.3);
+  transition: opacity .5s, filter .5s, transform .5s cubic-bezier(.2, .8, .2, 1), box-shadow .5s;
+  animation: rise .6s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i) * 70ms + 150ms); }
+#showcase .tile svg { grid-row: span 2; width: 42px; height: 42px; fill: none; stroke: var(--signal); stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round; }
+#showcase .tile h3 { font: 700 25px/1.05 var(--display); letter-spacing: .02em; color: var(--bone); }
+#showcase .tile p { font: 500 16px/1.25 var(--display); letter-spacing: .03em; color: var(--steel); font-variant-numeric: tabular-nums; }
+#showcase .tile.seen { opacity: .82; filter: none; }
+#showcase .tile.seen::after { content: "✓"; position: absolute; right: 14px; top: 10px; font: 700 16px var(--display); color: var(--signal); }
+#showcase .tile.on { opacity: 1; filter: none; transform: scale(1.035);
+  box-shadow: inset 0 0 0 2px var(--signal), 0 0 40px rgba(255, 194, 14, .25); }
+#showcase .tile.on::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 194, 14, .13) 50%, transparent 70%);
+  background-size: 250% 100%; animation: scan 1.8s linear infinite; }
+#showcase .tile.on p { color: var(--signal); }
+#showcase.all .tile { opacity: 1; filter: none; }
+@keyframes scan { from { background-position: 150% 0; } to { background-position: -100% 0; } }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+body.showcase #subtitle { bottom: 5vh; font-size: 22px; }
+@media (prefers-reduced-motion: reduce) {
+  #showcase .sweep, #showcase .tile.on::before, #showcase .rec { animation: none; }
+}

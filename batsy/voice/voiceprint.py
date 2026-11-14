@@ -46,12 +46,13 @@ class VoicePrint:
         v = np.array(self.extractor.compute(s), dtype=np.float32)
         return v / (np.linalg.norm(v) + 1e-9)
 
-    def is_owner(self, audio: np.ndarray | None) -> bool:
-        """True if this sounds like you (or no voice is enrolled)."""
+    def is_owner(self, audio: np.ndarray | None, strict: bool = False) -> bool:
+        """True if this sounds like you (or no voice is enrolled). strict: the bar for waking Batsy up, where a
+        video or TV voice must not get through (your real "Batsy ..." commands all score 0.79+)."""
         if not self.active or audio is None or audio.size < 16000 // 2:
             return True
         score = float(self.embed(audio) @ self.owner)
-        ok = score >= self.cfg.get("voice.speaker_match")
+        ok = score >= (self.cfg.get("voice.speaker_match_wake") if strict else self.cfg.get("voice.speaker_match"))
         log.info("speaker score %.2f (%s)", score, "you" if ok else "not you; ignoring")
         return ok
 

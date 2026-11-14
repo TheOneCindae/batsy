@@ -163,6 +163,14 @@ def cmd_mode(cfg, args) -> None:
         sys.exit("Batsy isn't running. Start it with `batsy run` before switching modes.")
 
 
+def cmd_listen(cfg, args) -> None:
+    """Listen now, no wake word: push-to-talk (bound to Super+B)."""
+    from batsy.app import listen_now
+
+    if not listen_now():
+        print("Batsy isn't running.")
+
+
 def cmd_ask(cfg, args) -> None:
     from batsy.app import ask_daemon
 
@@ -445,6 +453,7 @@ def main() -> None:
     sub.add_parser("stop", help="stop the conversation now (bind it to a keyboard shortcut)")
     p = sub.add_parser("mode", help="switch between voice and chat mode")
     p.add_argument("mode", choices=["voice", "chat", "toggle", "status"])
+    sub.add_parser("listen", help="listen now without the wake word (push-to-talk; bind it to a shortcut)")
     sub.add_parser("usage", help="show token usage")
     sub.add_parser("spotify-login", help="connect your Spotify account")
     p = sub.add_parser("skills", help="list (or --forget) skills Batsy learned")
@@ -469,4 +478,4 @@ def main() -> None:
     {"run": cmd_run, None: cmd_run, "chat": cmd_chat, "ask": cmd_ask,
      "doctor": cmd_doctor, "reset": cmd_reset, "usage": cmd_usage,
      "spotify-login": cmd_spotify_login, "vocab": cmd_vocab, "skills": cmd_skills,
-     "projects": cmd_projects, "stop": cmd_stop, "mode": cmd_mode, "vault": cmd_vault}[args.cmd](cfg, args)
+     "projects": cmd_projects, "stop": cmd_stop, "mode": cmd_mode, "listen": cmd_listen, "vault": cmd_vault}[args.cmd](cfg, args)

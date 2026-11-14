@@ -36,6 +36,7 @@ class Overlay:
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.has_media = False
+        self.showcase_on = False  # the "show what you can do" dashboard is up (batsy/showcase.py)
         self.last_active = 0.0  # last time Batsy used the overlay for a conversation
         self.on_saver_exit = None
         self.on_viewer_event = None  # 3D viewer hosted in the overlay: click-to-measure etc.
@@ -119,6 +120,7 @@ class Overlay:
                 elif ev.get("event") == "shown":
                     self._dock_send("away")  # the overlay is growing out of the bat
                 elif ev.get("event") == "hidden":
+                    self.showcase_on = False
                     self._rest()
             except Exception:
                 log.exception("overlay event %s", ev)
@@ -198,7 +200,10 @@ class Overlay:
 
     def _track(self, cmd: str, kw: dict) -> None:
         c = self.convo
+        if cmd == "showcase":
+            self.showcase_on = bool(kw.get("on"))
         if cmd == "listen" and kw.get("fresh"):
+            self.showcase_on = False
             c.update(you="", text="", image=None, title="", fresh=False, open=False)
         elif cmd == "heard":  # a new exchange: the bubble is about this one, not everything said before
             c.update(you=kw.get("text", ""), text="", open=True)

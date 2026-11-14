@@ -1,8 +1,13 @@
-"""Files in and out of this laptop, over Tailscale (Taildrop).
+"""Files in and out of this laptop, over Tailscale.
 
-In: send a file from your Mac (right-click > Share > Tailscale, or `tailscale file cp FILE <this laptop>:`) and it
-lands in ~/Batsy/inbox. Batsy says what arrived, shows it, reads it into memory (so "summarise what I just sent"
-works), and asks whether to open it. Anything else that drops files there (LocalSend, scp) is noticed too.
+In: each sender gets a folder, ~/Batsy/inbox/<name>, named in files.senders (Tailscale login -> name).
+  - Taildrop (right-click > Share > Tailscale on your Mac, or `tailscale file cp FILE <this laptop>:`) only works
+    between your own devices, so whatever it delivers is yours: it goes in your folder.
+  - Anyone else on the tailnet (and you, from any device) uploads to http://<this laptop>:8765, a page with a file
+    picker, or `curl -T FILE http://<this laptop>:8765/`. Tailscale says who is connecting (`tailscale whois`), so
+    the folder can't be faked; logins not in files.senders are turned away.
+Batsy says what arrived and from whom, shows it, reads it into memory (so "summarise what Karan sent" works), and
+asks whether to open it. Anything else that drops files in the inbox (LocalSend, scp) is noticed too.
 
 Out: "send this to my Mac" / "send the marked-up PDF to my Mac" / "send my thermodynamics notes to my iPad" runs
 `tailscale file cp`. On a Mac it arrives in Downloads. A folder is zipped first.
@@ -11,6 +16,8 @@ Linux keeps received Taildrop files in a holding area until something collects t
 `tailscale file get --loop` for that. Without root it needs one-time permission:
   sudo tailscale set --operator=$USER
 """
+import html
+import json
 import logging
 import os
 import re
@@ -19,6 +26,8 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from batsy.config import HOME
@@ -37,6 +46,11 @@ INBOX_LIST = re.compile(r"^(?:what(?:'s| is|s) in|show me|list|check) (?:my |the
 OPEN_INBOX = re.compile(r"^open (?:my |the )?inbox(?: folder)?$")
 OPEN_LAST = re.compile(r"^open (?:the |that )?(?:file|thing|one|pdf|picture|image|model)? ?(?:i|you) (?:just )?"
                        r"(?:sent|got|received|shared)(?: me| you)?$")
+FROM_LIST = re.compile(r"^(?:what|which files?) (?:did|has) (?P<who>[a-z]+) (?:send|sent|shared?)(?: me| you)?"
+                       r"(?: today)?$|^(?:show me|list|check) (?:the )?files? from (?P<who2>[a-z]+)$")
+OPEN_FROM = re.compile(r"^open (?P<who>[a-z]+)'?s? (?:inbox |files? )?folder$|"
+                       r"^open (?:the )?(?:inbox |files? )?folder (?:for|from) (?P<who2>[a-z]+)$")
+STAGING = ".taildrop"  # Taildrop lands here first, then moves into your folder
 DEVICE_WORDS = {"mac": "mac", "macbook": "mac", "mac book": "mac", "laptop": "mac", "other laptop": "mac",
                 "computer": "mac", "ipad": "ipad", "phone": "phone", "iphone": "phone", "android": "phone",
                 "mobile": "phone"}
@@ -67,6 +81,33 @@ def targets() -> list[str]:
     return [parts[1] for parts in (ln.split() for ln in out.splitlines()) if len(parts) >= 2]
 
 
+def whois(ip: str) -> tuple[str, str] | None:
+    """(login, device) behind a tailnet address, or None if it isn't one."""
+    code, out = _run(["whois", "--json", ip], timeout=5)
+    if code:
+        return None
+    try:
+        d = json.loads(out)
+        return d["UserProfile"]["LoginName"].lower(), d["Node"].get("ComputedName") or d["Node"]["Name"].split(".")[0]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def my_login() -> str:
+    """Whose tailnet login this laptop is on: Taildrop only delivers from that login's devices."""
+    code, out = _run(["status", "--json"])
+    try:
+        d = json.loads(out) if code == 0 else {}
+        return d["User"][str(d["Self"]["UserID"])]["LoginName"].lower()
+    except (ValueError, KeyError, TypeError):
+        return ""
+
+
+def my_ip() -> str:
+    code, out = _run(["ip", "-4"])
+    return out.splitlines()[0].strip() if code == 0 and out else ""
+
+
 def check() -> tuple[bool, str]:
     """(ok, what's wrong and how to fix it), for `batsy doctor`."""
     if not tailscale():
@@ -89,32 +130,73 @@ def check() -> tuple[bool, str]:
 
 
 class Inbox:
-    """Owned by the app: collects Taildrop files, notices new files in the inbox folder, and sends files out."""
+    """Owned by the app: collects Taildrop files, receives uploads, files each under its sender, notices new files
+    in the inbox, and sends files out."""
 
     def __init__(self, app):
+        import getpass
+
         self.app, self.cfg = app, app.cfg
         self.dir = Path(self.cfg.get("files.inbox")).expanduser()
         self.dir.mkdir(parents=True, exist_ok=True)
+        self.staging = self.dir / STAGING
+        self.senders = {k.lower(): _safe_name(v) for k, v in (self.cfg.get("files.senders") or {}).items()}
+        self.me = my_login() if tailscale() else ""  # your Tailscale login
+        self.mine = self.senders.get(self.me) or _safe_name(self.cfg.get("user.name") or getpass.getuser().title())
         self.last: Path | None = None     # the newest file that arrived
         self.problem = ""                 # why Taildrop collection isn't working, if it isn't
-        self._known = {p.name for p in self._files()}  # what's already there isn't news
+        self._known = {self._key(p) for p in self._files() if p.parent != self.staging}  # what's there isn't news
         self._growing: dict[str, tuple[int, float]] = {}
         self._batch: list[Path] = []
         self._batch_t = 0.0
         if self.cfg.get("files.taildrop") and tailscale():
             threading.Thread(target=self._collect, daemon=True, name="taildrop").start()
+        if self.cfg.get("files.receive") and tailscale():
+            threading.Thread(target=self._serve, daemon=True, name="receive").start()
         threading.Thread(target=self._watch, daemon=True, name="inbox").start()
+
+    def _key(self, p: Path) -> str:
+        return str(p.relative_to(self.dir))
+
+    def sender_of(self, p: Path) -> str | None:
+        """Whose folder a received file is in (None for one loose in the inbox)."""
+        return p.parent.name if p.parent != self.dir and p.parent != self.staging else None
+
+    def sender(self, ip: str) -> str | None:
+        """The folder for whoever is at this tailnet address, or None if they may not send files."""
+        who = whois(ip)
+        if not who:
+            return None
+        if who[0] in self.senders:
+            return self.senders[who[0]]
+        if not self.me:
+            self.me = my_login()
+        return self.mine if who[0] == self.me else None
+
+    def _folder(self, word: str) -> str | None:
+        """'karan' / 'my' -> the sender folder it means, if there is one."""
+        word = word.lower().strip()
+        if word in ("my", "me", "mine", "i"):
+            return self.mine
+        names = set(self.senders.values()) | {self.mine}
+        try:
+            names |= {p.name for p in self.dir.iterdir() if p.is_dir() and not p.name.startswith(".")}
+        except OSError:
+            pass
+        return next((n for n in names if n.lower() == word), None)
 
     # --- in ------------------------------------------------------------------------------------------------
     def _collect(self) -> None:
-        """`tailscale file get --loop`: move each file Taildrop receives into the inbox. Restarts if it stops."""
+        """`tailscale file get --loop`: move each file Taildrop receives into staging; the watcher then files it in
+        your folder. Restarts if it stops."""
         delay = 10
+        self.staging.mkdir(exist_ok=True)
         while True:
             t0 = time.time()
             self.problem = None  # fixed since last time (e.g. the operator was just set)? find out afresh
             try:
                 p = subprocess.Popen([tailscale(), "file", "get", "--loop", "--wait", "--conflict=rename", "--verbose",
-                                      str(self.dir)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                                      str(self.staging)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 for line in p.stdout:
                     line = line.strip()
                     if line:
@@ -130,31 +212,48 @@ class Inbox:
             delay = 10 if time.time() - t0 > 120 else min(300, delay * 2)  # back off while it keeps failing
             time.sleep(delay)
 
-    def _files(self) -> list[Path]:
+    def _files(self, sender: str | None = None) -> list[Path]:
+        """Received files: loose in the inbox, in each sender's folder, and waiting in Taildrop's staging folder.
+        With `sender`, only that sender's folder."""
+        def listed(d: Path) -> list[Path]:
+            try:
+                return [p for p in d.iterdir() if p.is_file() and not PARTIAL.search(p.name)]
+            except OSError:
+                return []
+
+        if sender:
+            return listed(self.dir / sender)
+        out = listed(self.dir)
         try:
-            return [p for p in self.dir.iterdir() if p.is_file() and not PARTIAL.search(p.name)]
+            dirs = [p for p in self.dir.iterdir() if p.is_dir() and (not p.name.startswith(".") or p == self.staging)]
         except OSError:
-            return []
+            dirs = []
+        for d in dirs:
+            out += listed(d)
+        return out
 
     def _watch(self) -> None:
-        """Every couple of seconds: a new file whose size has stopped changing has arrived. Several arriving
-        together are announced once."""
+        """Every couple of seconds: a new file whose size has stopped changing has arrived. Taildrop's are moved
+        into your folder first. Several arriving together are announced once."""
         while True:
             time.sleep(2)
             try:
                 now = time.time()
                 for p in self._files():
-                    if p.name in self._known:
+                    key = self._key(p)
+                    if key in self._known:
                         continue
                     size = p.stat().st_size
-                    was = self._growing.get(p.name)
+                    was = self._growing.get(key)
                     if was and was[0] == size and now - was[1] >= 2:
-                        self._known.add(p.name)
-                        self._growing.pop(p.name, None)
+                        self._growing.pop(key, None)
+                        if p.parent == self.staging:
+                            p = _place(p, self.dir / self.mine)
+                        self._known.add(self._key(p))
                         self._batch.append(p)
                         self._batch_t = now
                     elif not was or was[0] != size:
-                        self._growing[p.name] = (size, now)
+                        self._growing[key] = (size, now)
                 if self._batch and now - self._batch_t >= 3:
                     batch, self._batch = self._batch, []
                     self._arrived(batch)
@@ -172,23 +271,61 @@ class Inbox:
         if first.suffix.lower() in docs.SUPPORTED:  # "summarise what I just sent" / "circle the dates in it"
             brain.last_doc = (first, time.time())
             threading.Thread(target=self._learn, args=(first,), daemon=True).start()
-        names = [p.name for p in files]
-        if len(files) == 1:
-            question = f"{names[0]} just arrived. Want me to open it?"
-        else:
-            listed = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
-            question = f"{len(files)} files just arrived: {listed}. Want me to open the first one?"
-        brain.note_announcement(question.split(" Want")[0])  # so the AI knows what you mean by "that file"
+        spoken = self._describe(files, spoken=True)
+        question = spoken + (". Want me to open it?" if len(files) == 1 else ". Want me to open the first one?")
+        brain.note_announcement(self._describe(files))  # full names, so the AI knows what you mean by "that file"
         self._wait_quiet()
         if self._user_away():
-            self.app.announce(question.split(" Want")[0])  # spoken + a desktop notification; nothing to answer
+            self.app.announce(spoken)  # spoken + a desktop notification; nothing to answer
             return
         if self.app.overlay.enabled and first.suffix.lower() in docs.IMAGES:
             self.app.overlay.image(first, first.name)
-        self.app.show_visual("card", "Just arrived | " + "\n".join(
-            f"- {p.name} · {_size(p)}" for p in files[:6]))
+        self.app.show_visual("card", "Just arrived | " + "\n".join(self._line(p) for p in files[:6]))
         self.app.projects.pending = {"kind": "open", "files": [str(p) for p in files], "until": time.time() + 120}
         self.app.ask_user(question)
+
+    def _describe(self, files: list[Path], spoken: bool = False) -> str:
+        """'Karan sent report.pdf' / 'Rehaan sent 3 files: a, b and c; you sent d' / 'notes.pdf just arrived'.
+        spoken: how a person would say it: 'Karan sent Physics notes, a PDF' / 'you sent 3 copies of Audit report'
+        / 'Rehaan sent 4 photos'. Full names stay on the card."""
+        groups: dict[str | None, list[Path]] = {}
+        for p in files:
+            groups.setdefault(self.sender_of(p), []).append(p)
+        said = []
+        for who, paths in groups.items():
+            names = [p.name for p in paths]
+            listed = ", ".join(names[:3]) + (f" and {len(names) - 3} more" if len(names) > 3 else "")
+            what = names[0] if len(names) == 1 else f"{len(names)} files: {listed}"
+            if spoken:
+                what = listed = _say_files(paths)
+            if who is None:
+                said.append(f"{what} just arrived" if len(names) == 1 or spoken else
+                            f"{len(names)} files just arrived: {listed}")
+            else:
+                said.append(f"{'you' if who == self.mine else who} sent {what}")
+        text = "; ".join(said)
+        return text[0].upper() + text[1:]
+
+    def _line(self, p: Path) -> str:
+        who = self.sender_of(p)
+        return f"- {p.name} · {_size(p)}" + (f" · from {who}" if who else "")
+
+    # --- receiving uploads ---------------------------------------------------------------------------------
+    def _serve(self) -> None:
+        """The upload page. Bound to this laptop's Tailscale address only, so nothing off the tailnet can reach
+        it. Waits for Tailscale to be up."""
+        port = int(self.cfg.get("files.receive_port"))
+        while True:
+            ip = my_ip()
+            if ip:
+                try:
+                    srv = ThreadingHTTPServer((ip, port), _handler(self))
+                    srv.daemon_threads = True
+                    log.info("receiving files at http://%s:%d", ip, port)
+                    srv.serve_forever()
+                except OSError as e:
+                    log.warning("can't receive files on %s:%d: %s", ip, port, e)
+            time.sleep(30)
 
     def _learn(self, path: Path) -> None:
         from batsy import docs
@@ -220,6 +357,17 @@ class Inbox:
             return self._send(m.group("what"), m.group("dev"))
         if INBOX_LIST.match(n):
             return self._list()
+        m = FROM_LIST.match(n) or OPEN_FROM.match(n)
+        if m:
+            who = self._folder(m.group("who") or m.group("who2"))
+            if not who:
+                return False  # "what did you send" isn't about a sender
+            if m.re is FROM_LIST:
+                return self._list(who)
+            (self.dir / who).mkdir(exist_ok=True)
+            self.app._open(str(self.dir / who))
+            self.app._reply(f"Opening {'your' if who == self.mine else who + chr(39) + 's'} folder.")
+            return True
         if OPEN_INBOX.match(n):
             self.app._open(str(self.dir))
             self.app._reply("Opening your inbox.")
@@ -308,21 +456,147 @@ class Inbox:
             self.app._reply(f"Sending failed: {out.splitlines()[-1][:120] if out else 'no reason given'}.")
         return True
 
-    def _list(self) -> bool:
-        files = sorted(self._files(), key=lambda p: p.stat().st_mtime, reverse=True)[:6]
+    def _list(self, sender: str | None = None) -> bool:
+        """What came in (from everyone, or from one sender), newest first."""
+        files = sorted(self._files(sender), key=lambda p: p.stat().st_mtime, reverse=True)[:6]
+        who = "you" if sender == self.mine else sender
         if not files:
-            self.app._reply("Your inbox is empty.")
+            self.app._reply(f"{who.title()} haven't sent anything yet." if who == "you" else
+                            f"{who} hasn't sent anything yet." if who else "Your inbox is empty.")
             return True
         today = [p for p in files if time.time() - p.stat().st_mtime < 86400]
+        latest = today[0] if today else files[0]
+        came = f"from {who} " if who else ""
         if today:
-            self.app._reply(f"{len(today)} file{'s' if len(today) != 1 else ''} came in today; the latest is "
-                            f"{today[0].name}.")
+            self.app._reply(f"{len(today)} file{'s' if len(today) != 1 else ''} came in {came}today; the latest is "
+                            f"{latest.name}" + (f", from {self.sender_of(latest)}." if not who and
+                                                self.sender_of(latest) else "."))
         else:
-            self.app._reply(f"Nothing new today. The latest is {files[0].name}.")
-        self.app.show_visual("card", "Inbox | " + "\n".join(f"- {p.name} · {_size(p)}" for p in files))
+            self.app._reply(f"Nothing new {came}today. The latest is {latest.name}.")
+        title = f"From {sender}" if sender else "Inbox"
+        self.app.show_visual("card", f"{title} | " + "\n".join(
+            f"- {p.name} · {_size(p)}" if sender else self._line(p) for p in files))
         if self.problem:
             log.warning("inbox: %s", self.problem)
         return True
+
+
+def _safe_name(name: str) -> str:
+    """A file or folder name that stays where it's put: no path parts, no leading dot, no control characters."""
+    name = re.sub(r"[\x00-\x1f\x7f]", "", os.path.basename(str(name).replace("\\", "/"))).strip().lstrip(".")
+    return name[:200] or "file"
+
+
+def _place(src: Path, folder: Path, name: str | None = None) -> Path:
+    """Move src into folder (as `name`) without overwriting anything: 'a.pdf' becomes 'a (1).pdf' if taken."""
+    folder.mkdir(parents=True, exist_ok=True)
+    base = Path(name or src.name)
+    for i in range(10_000):
+        dest = folder / (base.name if i == 0 else f"{base.stem} ({i}){base.suffix}")
+        try:
+            os.link(src, dest)  # atomic and refuses to overwrite, even with two uploads racing
+        except FileExistsError:
+            continue
+        os.unlink(src)
+        return dest
+    raise OSError(f"too many files called {base.name}")
+
+
+PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Send files</title>
+<style>
+body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 16px;background:#fff;color:#111}
+@media(prefers-color-scheme:dark){body{background:#111;color:#eee}}
+label{display:block;padding:2.5rem 1rem;border:2px dashed #888;border-radius:12px;text-align:center;cursor:pointer}
+label.over{border-color:#3b82f6}input{display:none}ul{padding:0;list-style:none}li{margin:.5rem 0;word-break:break-all}
+</style>
+<h1>Hi {who}</h1><p>Files you send here land in your folder on {me}'s laptop.</p>
+<label id=drop>Tap to choose files, or drop them here<input type=file multiple id=pick></label><ul id=log></ul>
+<script>
+async function send(files){for(const f of files){const li=document.createElement('li');li.textContent=f.name+' …';
+log.append(li);await new Promise(done=>{const x=new XMLHttpRequest();x.open('PUT','/'+encodeURIComponent(f.name));
+x.upload.onprogress=e=>{if(e.lengthComputable)li.textContent=f.name+' '+Math.round(100*e.loaded/e.total)+'%'};
+x.onload=()=>{li.textContent=f.name+(x.status<300?' ✓ sent':' ✗ '+x.responseText);done()};
+x.onerror=()=>{li.textContent=f.name+' ✗ failed, try again';done()};x.send(f)})}}
+pick.onchange=()=>{send([...pick.files]);pick.value=''};
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};drop.ondragleave=()=>drop.classList.remove('over');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');send([...e.dataTransfer.files])};
+</script>
+"""
+
+
+def _handler(inbox: "Inbox"):
+    """GET / is the upload page; PUT /<name> (curl -T FILE http://host:port/) stores a file in the sender's folder.
+    Who the sender is comes from Tailscale, never from the request."""
+    limit = int(inbox.cfg.get("files.receive_max_mb")) << 20
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"  # so curl gets "100 Continue" instead of waiting before it uploads
+        server_version = "Batsy"
+
+        def log_message(self, fmt, *args):
+            log.debug("receive %s: " + fmt, self.client_address[0], *args)
+
+        def _reply(self, code: int, text: str, kind: str = "text/plain; charset=utf-8") -> None:
+            body = text.encode()
+            self.close_connection = code >= 400  # an unread upload body mustn't be parsed as the next request
+            self.send_response(code)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            if self.close_connection:
+                self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _sender(self) -> str | None:
+            who = inbox.sender(self.client_address[0])
+            if not who:
+                log.info("receive: turned away %s", self.client_address[0])
+                self._reply(403, "You're not on the list of people who can send files here.\n")
+            return who
+
+        def do_GET(self):
+            who = self._sender()
+            if who:
+                page = PAGE.replace("{who}", html.escape("there" if who == inbox.mine else who))
+                self._reply(200, page.replace("{me}", html.escape(inbox.mine)), "text/html; charset=utf-8")
+
+        def do_PUT(self):
+            who = self._sender()
+            if not who:
+                return
+            name = _safe_name(urllib.parse.unquote(urllib.parse.urlsplit(self.path).path))
+            try:
+                size = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                return self._reply(411, "Send the file itself (curl -T FILE ...), not a stream.\n")
+            if size > limit:
+                return self._reply(413, f"That's over the {limit >> 20} MB limit.\n")
+            folder = inbox.dir / who
+            folder.mkdir(parents=True, exist_ok=True)
+            tmp = folder / f".{name}.{threading.get_ident()}.part"  # hidden until complete: the watcher skips it
+            try:
+                with open(tmp, "wb") as f:
+                    left = size
+                    while left:
+                        chunk = self.rfile.read(min(left, 1 << 20))
+                        if not chunk:
+                            raise ConnectionError("upload cut off")
+                        f.write(chunk)
+                        left -= len(chunk)
+                dest = _place(tmp, folder, name)
+            except (OSError, ConnectionError) as e:
+                tmp.unlink(missing_ok=True)
+                log.warning("receive %s from %s failed: %s", name, who, e)
+                try:
+                    self._reply(500, "Couldn't save it, try again.\n")
+                except OSError:
+                    pass
+                return
+            log.info("received %s from %s", dest.name, who)
+            self._reply(201, f"Got it: {dest.name}\n")
+
+    return Handler
 
 
 def _zip(folder: Path, out: Path) -> Path:
@@ -341,6 +615,46 @@ def _zip(folder: Path, out: Path) -> Path:
                 full = os.path.join(dirpath, f)
                 z.write(full, os.path.join(folder.name, os.path.relpath(full, folder)))
     return out
+
+
+KINDS = {".pdf": ("a PDF", "PDFs"), ".docx": ("a Word file", "Word files"), ".doc": ("a Word file", "Word files"),
+         ".pptx": ("a slide deck", "slide decks"), ".ppt": ("a slide deck", "slide decks"),
+         ".xlsx": ("a spreadsheet", "spreadsheets"), ".csv": ("a spreadsheet", "spreadsheets"),
+         ".jpg": ("a photo", "photos"), ".jpeg": ("a photo", "photos"), ".png": ("an image", "images"),
+         ".heic": ("a photo", "photos"), ".mp4": ("a video", "videos"), ".mov": ("a video", "videos"),
+         ".mp3": ("a song", "songs"), ".zip": ("a zip", "zips"), ".txt": ("a text file", "text files")}
+
+
+def _title(p: Path) -> str:
+    """'Academic_Audit-Report2025-2026 (1).pdf' -> 'Academic Audit Report': what you'd call it out loud."""
+    s = re.sub(r"\s*\(\d+\)$", "", p.stem)  # browser copies: "x (1)"
+    s = re.sub(r"[_\-.]+", " ", s)
+    s = re.sub(r"\b(?:v\d+|final|copy)\b", " ", s, flags=re.I)  # version tags nobody says
+    s = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[A-Za-z])", " ", s)  # "Report2025" -> "Report 2025"
+    words = [w for w in s.split() if not re.fullmatch(r"\d{4,}|img|dsc|scan", w, re.I)]
+    words = words or s.split()
+    if len(words) > 10:  # very long titles: the gist is enough
+        words = words[:8]
+    out = " ".join(words)
+    return out[0].upper() + out[1:] if out else p.name
+
+
+def _say_files(paths: list[Path]) -> str:
+    """One file: 'Physics notes, a PDF'. Copies: '3 copies of Audit report'. Several: '4 photos' / '3 PDFs and a
+    Word file' / '5 files'."""
+    kinds = [KINDS.get(p.suffix.lower(), ("a file", "files")) for p in paths]
+    if len(paths) == 1:
+        return f"{_title(paths[0])}, {kinds[0][0]}" if kinds[0][0] != "a file" else _title(paths[0])
+    titles = {_title(p).lower() for p in paths}
+    if len(titles) == 1:
+        return f"{len(paths)} copies of {_title(paths[0])}"
+    counts: dict[tuple[str, str], int] = {}
+    for k in kinds:
+        counts[k] = counts.get(k, 0) + 1
+    if len(counts) > 2:
+        return f"{len(paths)} files"
+    parts = [(f"{n} {plural}" if n > 1 else one) for (one, plural), n in counts.items()]
+    return " and ".join(parts)
 
 
 def _size(p: Path) -> str:

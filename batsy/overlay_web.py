@@ -21,7 +21,7 @@ from batsy import webui
 from batsy.camera_view import FLASH_PATH
 
 log = logging.getLogger("batsy.overlay")
-SHOWN_CMDS = {"listen", "think", "say", "image", "card", "status"}
+SHOWN_CMDS = {"listen", "think", "say", "image", "card", "status", "showcase"}
 
 
 def emit(ev: dict) -> None:
@@ -50,6 +50,7 @@ class Shell(QWidget):
         lay.addWidget(self.web.view)
         self.saver = False
         self.model_on = False
+        self.showcase_on = False  # the live dashboard: stays up a while after the tour, like the camera
         self.scene = None
         self.camera_path: str | None = None
         self.camera_mtime = 0.0
@@ -75,6 +76,10 @@ class Shell(QWidget):
             return
         if cmd in ("listen", "think", "say", "image", "card", "hide"):
             self.saver = False
+        if cmd == "showcase":
+            self.showcase_on = bool(m.get("on"))
+        elif cmd == "listen" and m.get("fresh"):
+            self.showcase_on = False
         if cmd == "image":
             m = {**m, "url": webui.file_url(m.get("path", ""))}
         if cmd == "camera":
@@ -97,7 +102,7 @@ class Shell(QWidget):
         if cmd in SHOWN_CMDS:
             self._appear()
         if cmd == "done":
-            busy = self.camera_path or self.model_on  # live views stay up until closed or idle a while
+            busy = self.camera_path or self.model_on or self.showcase_on  # live views stay up a while
             linger = float(m.get("linger", 6))
             self.hide_timer.start(int(1000 * (max(linger, 180) if busy else linger)))
         if cmd == "hide":
@@ -178,6 +183,7 @@ class Shell(QWidget):
         self.collapse_timer.stop()
         was_saver, self.saver = self.saver, False
         notify, self.collapse_notify = self.collapse_notify, False
+        self.showcase_on = False
         self.web.send({"cmd": "hidden"})
         self.hide()
         emit({"event": "hidden"})
