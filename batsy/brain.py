@@ -176,7 +176,8 @@ class Brain:
 
     def _ask(self, text, source, say, abort, on_tool) -> str:
         stamp = time.strftime("%Y-%m-%d %H:%M %a")
-        context = self.memory.build_context(text, self.cfg)
+        context = self.memory.build_context(text, self.cfg, recent=self.cfg.get("chat.history_in_context")
+                                            if getattr(self, "chat_style", False) else None)
         prompt = f"{context}\n\n[Now {stamp} · {source}] {text}" if context else f"[Now {stamp} · {source}] {text}"
         self.messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
         actions: list[str] = []

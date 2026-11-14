@@ -194,7 +194,7 @@ class ChatServer:
                                     memory = owner.app.brain.memory
                                     memory.add_exchange("chat", text, answer, ["instant command"])
                                     with memory.lock, memory.db:
-                                        row = memory.db.execute("SELECT id FROM exchanges WHERE user=? ORDER BY id DESC LIMIT 1", (text,)).fetchone()
+                                        row = memory.db.execute("SELECT id FROM exchanges WHERE user=? AND source='chat' ORDER BY id DESC LIMIT 1", (text,)).fetchone()
                                         if row:
                                             memory.db.execute("UPDATE exchanges SET conversation_id=?,reply_raw=?,style='chat',brain='command' WHERE id=?",
                                                               (cid, answer, row["id"]))
@@ -223,9 +223,14 @@ class ChatServer:
                         threading.Thread(target=work, daemon=True, name=f"chat-{tid}").start()
                         self._json({"id": tid, "conversation": cid}, 202)
                     elif self.path == "/api/stop":
-                        owner.conversations.stop(data.get("id"))
+                        turn_id = str(data.get("id") or "")
+                        if turn_id.startswith("voice-"):
+                            owner.app.end_conversation()
+                        else:
+                            owner.conversations.stop(turn_id or None)
+                            owner.app.speaker.stop()
                         from batsy import claude_code
-                        claude_code.cancel(thread=f"chat-{data.get('id')}")
+                        claude_code.cancel(thread="turn" if turn_id.startswith("voice-") else f"chat-{turn_id}")
                         self._json({"ok": True})
                     elif self.path == "/api/conversation/new":
                         cid = owner.conversations.create()

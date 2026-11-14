@@ -531,7 +531,8 @@ class Batsy:
             if self.chat_server:
                 memory = self.brain.memory
                 with memory.lock, memory.db:
-                    row = memory.db.execute("SELECT id FROM exchanges ORDER BY id DESC LIMIT 1").fetchone()
+                    row = memory.db.execute("SELECT id FROM exchanges WHERE user=? AND source=? ORDER BY id DESC LIMIT 1",
+                                            (text, source)).fetchone()
                     if row:
                         memory.db.execute("UPDATE exchanges SET conversation_id=?,reply_raw=?,style='voice',brain='cache' WHERE id=?",
                                           (cid, known, row["id"]))
@@ -603,7 +604,8 @@ class Batsy:
             self._learn_phrase(text)
             if self.chat_server:
                 with memory.lock, memory.db:
-                    row = memory.db.execute("SELECT id FROM exchanges WHERE user=? ORDER BY id DESC LIMIT 1", (text,)).fetchone()
+                    row = memory.db.execute("SELECT id FROM exchanges WHERE user=? AND source=? ORDER BY id DESC LIMIT 1",
+                                            (text, source)).fetchone()
                     if row:
                         cid = conversation_id
                         memory.db.execute("UPDATE exchanges SET conversation_id=?,reply_raw=?,style=?,brain=? WHERE id=?",

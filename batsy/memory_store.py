@@ -102,7 +102,7 @@ class MemoryStore:
 
     def recent(self, limit: int, max_age_s: float) -> list[sqlite3.Row]:
         cid = getattr(self.turn_state, "conversation_id", None)
-        since = time.time() - max_age_s if cid is not None else max(self.session_start(), time.time() - max_age_s)
+        since = 0 if cid is not None else max(self.session_start(), time.time() - max_age_s)
         with self.lock:
             if cid is None:
                 rows = self.db.execute("SELECT * FROM exchanges WHERE t >= ? ORDER BY id DESC LIMIT ?",
@@ -231,6 +231,9 @@ class MemoryStore:
         recent = self.recent(m["recent_exchanges"], m["recent_minutes"] * 60)
         oldest = recent[0]["id"] if recent else None
         older = self.search_exchanges(text, m["related_exchanges"], oldest)
+        cid = getattr(self.turn_state, "conversation_id", None)
+        if cid is not None:
+            older = [r for r in older if r["conversation_id"] == cid]
         if older:
             older = [r for r in older if r["source"] != "alert"]
         if older:

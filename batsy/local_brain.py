@@ -326,7 +326,8 @@ class LocalBrain:
 
     def _ask(self, text, source, say, abort, on_tool) -> str:
         m = self.cfg.get("local")
-        context = self.memory.build_context(text, self.cfg, recent=m["recent_exchanges"], related=m["related_exchanges"])
+        recent = max(m["recent_exchanges"], self.cfg.get("chat.history_in_context")) if self.chat_style else m["recent_exchanges"]
+        context = self.memory.build_context(text, self.cfg, recent=recent, related=m["related_exchanges"])
         stamp = time.strftime("%a %d %b %Y %H:%M")
         prompt = (f"{context}\n\n" if context else "") + f"[Now {stamp}] {text}"
         system_prompt = self.system + ("\nFor this typed chat reply, answer fully with useful Markdown and fenced code blocks. Avoid filler."
