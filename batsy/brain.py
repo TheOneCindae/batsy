@@ -100,6 +100,7 @@ class Brain:
     def __init__(self, cfg, registry: ToolRegistry):
         self.cfg = cfg
         self.registry = registry
+        self.on_delta = None
         self.client = anthropic.Anthropic()
         self.memory = get_store()
         self.messages: list[dict] = []  # the current request's tool loop only; rebuilt every request
@@ -191,7 +192,7 @@ class Brain:
                 threading.Thread(target=self.visual, args=(kind, arg), daemon=True).start()
 
         for _ in range(self.cfg.get("claude.max_steps")):
-            chunker = SpeechChunker(emit, on_marker)
+            chunker = SpeechChunker(emit, on_marker, self.on_delta)
             try:
                 final = self._stream_once(chunker, abort)
             except anthropic.AuthenticationError:

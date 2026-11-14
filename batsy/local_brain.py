@@ -53,7 +53,8 @@ LOCAL_TOOLS = {
     "agenda": ("The user's plans. add: date YYYY-MM-DD + text. list: date (and end_date).",
                {"action": {"type": "string", "enum": ["add", "list"]}, "date": {"type": "string"},
                 "end_date": {"type": "string"}, "text": {"type": "string"}}, ["action"]),
-    "remember": ("Save a lasting fact about the user.", {"fact": {"type": "string"}}, ["fact"]),
+    "remember": ("Save a lasting fact. about = the project, person or device it's about (omit for facts about the user).",
+                 {"fact": {"type": "string"}, "about": {"type": "string"}}, ["fact"]),
     "camera": ("Open or close the live camera window.",
                {"action": {"type": "string", "enum": ["open", "close"]}}, ["action"]),
     "look": ("See the camera (what the user is holding/showing) or the screen. Claude looks and answers.",
@@ -170,6 +171,9 @@ class LocalBrain:
     def __init__(self, cfg, registry: ToolRegistry):
         self.cfg = cfg
         self.registry = registry
+        self.on_delta = None
+        self.chat_style = False
+        self.brain_preference = "auto"
         self.memory = get_store()
         self.lock = threading.Lock()
         self.visual: Callable[[str, str], None] | None = None
@@ -182,7 +186,7 @@ class LocalBrain:
             for name, (desc, props, req) in LOCAL_TOOLS.items()
             if name in registry.tools or name in ("ask_claude", "look")  # these two are handled by the brain itself
         ]
-        self._claude_installed = bool(shutil.which("claude")) and cfg.get("local.auto_claude")
+        self._claude_installed = bool(shutil.which("claude"))
         self.skills = None            # SkillBook, set by the app
         self.last_skill_run: str | None = None
         self.last_doc = None          # (path, time) of the file worked on last, for follow-ups
@@ -193,7 +197,8 @@ class LocalBrain:
         """Claude Code is installed, auto-routing is on, and Batsy's Claude budget isn't used up."""
         from batsy import claude_code
 
-        return self._claude_installed and claude_code.over_budget(self.cfg) is None
+        allowed = self.cfg.get("local.auto_claude") or self.brain_preference == "claude"
+        return self._claude_installed and allowed and self.brain_preference != "local" and claude_code.over_budget(self.cfg) is None
 
     # --- Ollama -------------------------------------------------------------
     def _options(self) -> dict:
@@ -255,7 +260,7 @@ class LocalBrain:
                     {"role": "user", "content": (f"{recent}\n\n" if recent else "") + text}]
         body = {"model": self.model, "stream": True, "keep_alive": self.cfg.get("local.keep_alive"),
                 "messages": messages, "options": {**self._options(), "num_predict": 80}}
-        chunker, content, started = SpeechChunker(emit, on_marker), "", False
+        chunker, content, started = SpeechChunker(emit, on_marker, self.on_delta), "", False
         try:
             with self._post(body) as resp:
                 for line in resp:
@@ -324,8 +329,14 @@ class LocalBrain:
         context = self.memory.build_context(text, self.cfg, recent=m["recent_exchanges"], related=m["related_exchanges"])
         stamp = time.strftime("%a %d %b %Y %H:%M")
         prompt = (f"{context}\n\n" if context else "") + f"[Now {stamp}] {text}"
-        messages = [{"role": "system", "content": self.system}, {"role": "user", "content": prompt}]
+        system_prompt = self.system + ("\nFor this typed chat reply, answer fully with useful Markdown and fenced code blocks. Avoid filler."
+                                       if self.chat_style else "")
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
         spoken, actions = [], []
+        if self.chat_style and self.brain_preference == "claude" and self._claude_installed:
+            self.route = "claude"
+            self._claude(text, context, lambda s: (spoken.append(s), say(s)), None, on_tool, actions, force=True)
+            return self._finish(source, text, spoken, actions, abort)
 
         def emit(sentence: str) -> None:
             spoken.append(sentence)
@@ -358,7 +369,7 @@ class LocalBrain:
             self.route = "claude"
             answer = claude_code.run(SAVER_BRIEF.format(request=text, spec=json.dumps(load())), "redesigning screensaver",
                                      args=["--allowedTools", "Bash(batsy saver:*)"], timeout=300)
-            chunker = SpeechChunker(emit, on_marker)
+            chunker = SpeechChunker(emit, on_marker, self.on_delta)
             chunker.feed(answer)
             chunker.flush()
             actions.append("redesigned the screensaver")
@@ -429,7 +440,7 @@ class LocalBrain:
 
         self.route = "full"
         for _ in range(m["max_steps"]):
-            chunker = SpeechChunker(emit, on_marker)
+            chunker = SpeechChunker(emit, on_marker, self.on_delta)
             self.status("Thinking with the local model")
             try:
                 result = self._stream(messages, chunker, abort)
@@ -572,7 +583,8 @@ class LocalBrain:
             on_tool("ask_claude")
         log.info("routing to Claude: %s", request[:120])
         self.status("Asking Claude" if "(Read the image" not in request else "Asking Claude about what I see")
-        speak_stream(lambda on_text: ask_claude(request, context, force=force, on_text=on_text), emit, on_marker)
+        speak_stream(lambda on_text: ask_claude(request, context, force=force, on_text=on_text), emit, on_marker,
+                     self.on_delta)
         actions.append("answered by Claude")
 
     def reset(self) -> None:
@@ -590,7 +602,7 @@ ask for detail, an explanation or steps. No extra facts, background, tips or fol
 for ("what is this?" -> "That's a red banana."). No markdown or lists in the spoken part. Be precise and correct.
 Only when they ask to see something, or for steps/lists/code, add a screen marker (not spoken): [[show: exact \
 name]] for a picture, [[pull: exact name]] for a person/place/thing with its facts, [[card: Title | line; line]] \
-for steps, lists, numbers or code summaries. Put any code or files under {workspace} and just say where.
+for steps, lists, numbers or code summaries. Put any code or files under {workspace} and just say where.{vault}
 {context}
 User: {request}"""
 
@@ -674,9 +686,9 @@ def ask_claude_3d(request: str, context: str = "", timeout: int = 900, on_text=N
         "--allowedTools", f"Read,Write,Edit,Glob,Grep,Bash(batsy 3d:*),Bash({sys.executable}:*)"])
 
 
-def speak_stream(ask, emit, on_marker=None) -> str:
+def speak_stream(ask, emit, on_marker=None, on_delta=None) -> str:
     """Run ask(on_text) and speak Claude's answer sentence by sentence as it's written, not after it ends."""
-    chunker, streamed = SpeechChunker(emit, on_marker), []
+    chunker, streamed = SpeechChunker(emit, on_marker, on_delta), []
 
     def on_text(chunk: str) -> None:
         streamed.append(chunk)
@@ -702,9 +714,12 @@ def ask_claude(prompt: str, context: str = "", timeout: int = 900, force: bool =
     me = who(claude_code.CFG or Config.load())
     github = (f" Their GitHub username is {me['github']} (use gh if it's installed, or the GitHub API with curl; "
               f"GITHUB_TOKEN may be set). Their projects are listed under things you remember.") if me["github"] else ""
+    from batsy import vault
+
+    v = vault.get(claude_code.CFG or Config.load())
     full = CLAUDE_BRIEF.format(workspace=WORKSPACE, context=context, request=prompt, home=home,
                                code=Path(__file__).resolve().parent.parent, user=me["user"], about=me["about"],
-                               github=github)
+                               github=github, vault=v.claude_hint() if v else "")
     return claude_code.run(full, "ask: " + prompt[:40], cwd=home, timeout=timeout, force=force, on_text=on_text, args=[
         "--permission-mode", "acceptEdits", "--add-dir", "/",
         "--allowedTools", "Read,Write,Edit,MultiEdit,Glob,Grep,Bash,WebSearch,WebFetch,TodoWrite"])

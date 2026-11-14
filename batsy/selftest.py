@@ -273,6 +273,34 @@ def t_memory(cfg):
     return f"FTS search {'on' if s.fts else 'off (LIKE fallback)'}; context {len(ctx)} chars"
 
 
+@check("Obsidian vault (memory graph)")
+def t_vault(cfg):
+    from batsy import vault
+
+    tmp = Path(tempfile.mkdtemp())
+    try:  # a throwaway vault, so the test never touches yours
+        v = vault.Vault(tmp, user="tester")
+        v.init()
+        v.remember("Uses an ESP32 DevKit", about="ESP32", kind="setup")
+        fid, _ = v.remember("The line follower runs on the ESP32", about="Robot project", kind="project")
+        need("[[ESP32]]" in (tmp / "Projects" / "Robot project.md").read_text(), "mentions aren't becoming wikilinks")
+        need(any(h.note.title == "ESP32" for h in v.search("robot project", expand=True)), "graph search missed a linked note")
+        need(v.remember("Uses an ESP32 DevKit", about="ESP32")[1].startswith("Already"), "duplicate fact saved twice")
+        ctx = "\n".join(v.context("how is my robot project going", cfg.get("memory")))
+        need("[Robot project" in ctx and "[ESP32" in ctx, "context block didn't include the note and its linked note")
+        need(v.forget(fid) == "Robot project", "forget by id failed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    live = vault.get(cfg)
+    if live is None:
+        raise Skip("vault is switched off ([vault] enabled = false): memory uses SQLite")
+    st = live.status()
+    note = f"{st['notes']} notes, {st['facts']} facts at {st['path']}"
+    if not st["skills"]:
+        note += "; obsidian-skills not installed yet (run: batsy vault init)"
+    return note + ("; obsidian CLI found" if st["obsidian_cli"] else "; obsidian CLI not found (optional)")
+
+
 @check("App index (instant open)")
 def t_apps(cfg):
     from batsy import apps
@@ -427,7 +455,7 @@ def main(argv: list[str]) -> None:
         (t_ollama, ()), (t_claude_installed, ()), (t_claude_live, (claude,)), (t_budget, ()),
         (t_mic, (voice,)), (t_vosk, ()), (t_whisper, ()), (t_tts, (voice,)),
         (t_idle, ()), (t_screenshot, ()), (t_overlay, (gui,)), (t_camera, (gui,)),
-        (t_memory, ()), (t_apps, ()), (t_skills, ()), (t_docs, ()), (t_ocr, ()), (t_images, ()),
+        (t_memory, ()), (t_vault, ()), (t_apps, ()), (t_skills, ()), (t_docs, ()), (t_ocr, ()), (t_images, ()),
         (t_3d, (gui,)), (t_arduino, (arduino,)), (t_spotify, ()), (t_parsers, ()),
     ]:
         fn(cfg, *args)

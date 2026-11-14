@@ -13,8 +13,9 @@ class SpeechChunker:
     to on_marker as soon as they're complete, so pictures appear while Batsy is still talking and
     without an extra tool round trip."""
 
-    def __init__(self, emit: Callable[[str], None], on_marker: Callable[[str, str], None] | None = None):
-        self.emit, self.on_marker, self.buf, self.in_code = emit, on_marker, "", False
+    def __init__(self, emit: Callable[[str], None], on_marker: Callable[[str, str], None] | None = None,
+                 on_delta: Callable[[str], None] | None = None):
+        self.emit, self.on_marker, self.on_delta, self.buf, self.in_code = emit, on_marker, on_delta, "", False
         self.first = True  # the first chunk may break at a comma: start talking as early as possible
 
     def _pull_markers(self) -> None:
@@ -24,6 +25,8 @@ class SpeechChunker:
             self.buf = self.buf[:m.start()] + self.buf[m.end():]
 
     def feed(self, text: str) -> None:
+        if self.on_delta:
+            self.on_delta(text)
         self.buf += text
         self._pull_markers()
         while True:

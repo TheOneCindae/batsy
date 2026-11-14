@@ -118,6 +118,17 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 - [ ] Ask something, then a follow-up that only makes sense with context ("and how about tomorrow?") → it understands.
 - [ ] "New conversation" → "Fresh start…" (long-term facts are kept).
 
+#### Memory vault (Obsidian)
+- [ ] `batsy vault init` → "Installed 7 skills into …/.claude/skills" and "Vault ready at ~/Batsy/vault". (No network? It prints the `claude plugin` commands to run instead.)
+- [ ] Open Obsidian → **Open folder as vault** → `~/Batsy/vault` (or run `batsy vault open`). You should see `Me`, `CLAUDE` and a `Daily` note.
+- [ ] "Batsy, remember I'm building a line following robot called Robot project" → then "remember Robot project uses an ESP32" → open **Projects/Robot project.md**: two facts, each ending in `^xxxxx`.
+- [ ] "Batsy, remember my ESP32 is on ttyUSB0" → then open **Robot project** again: `ESP32` is now a `[[link]]`, and **Graph view** shows Me → Robot project → ESP32.
+- [ ] Restart Batsy, then ask "Which port is my robot's board on?" → it answers from the notes. `batsy vault search "robot board"` shows which notes the graph brings up.
+- [ ] `batsy vault forget ID` (the id after `^` in the note) → the line is gone from the note.
+- [ ] Edit a note by hand in Obsidian (add a bullet under `## Facts`), then ask Batsy about it → it knows, no restart needed.
+- [ ] `batsy vault status` → counts, the installed skills, and any notes with no links.
+- [ ] Optional, for Claude Code to rename/move notes: Obsidian → Settings → General → turn on **Command line interface**, keep Obsidian open, then say "Batsy, ask Claude to rename the ESP32 note to ESP32 DevKit". Links in other notes should update.
+
 ### H. Pictures and pull-ups
 - [ ] "Show me a picture of the Eiffel Tower at night" → a night photo appears full screen.
 - [ ] "Pull up connections for Nikola Tesla" → photo plus a facts card ("Serbian-American engineer…"), and the first line spoken.

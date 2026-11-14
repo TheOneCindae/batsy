@@ -157,6 +157,12 @@ def cmd_stop(cfg, args) -> None:
         print("Batsy isn't running.")
 
 
+def cmd_mode(cfg, args) -> None:
+    from batsy.app import ask_daemon
+    if not ask_daemon("", mode=args.mode):
+        sys.exit("Batsy isn't running. Start it with `batsy run` before switching modes.")
+
+
 def cmd_ask(cfg, args) -> None:
     from batsy.app import ask_daemon
 
@@ -215,6 +221,56 @@ def cmd_skills(cfg, args) -> None:
         print(f"{r['name']:28} {state:10} worked {r['successes']}x, failed {r['failures']}x")
         for t in r["triggers"][:4]:
             print(f"    “{t}”")
+
+
+def cmd_vault(cfg, args) -> None:
+    """`batsy vault ...`: the Obsidian memory vault. Also how Claude Code saves memories (same code path as voice)."""
+    from batsy import vault
+
+    text = " ".join(args.text).strip()
+    if args.path:
+        cfg.data["vault"] = {**cfg.data["vault"], "path": args.path, "enabled": True}
+    v = vault.get(cfg)
+    if v is None:
+        sys.exit("The vault is switched off or couldn't be opened ([vault] in ~/.config/batsy/config.toml).")
+    act = args.action
+    if act == "init":
+        if not args.no_skills:
+            names, msg = v.install_skills()
+            print(msg + (f": {', '.join(names)}" if names else ""))
+        st = v.status()
+        print(f"Vault ready at {st['path']} ({st['notes']} notes, {st['facts']} facts).")
+        if args.path:
+            print(f'To keep using it, set in ~/.config/batsy/config.toml:\n[vault]\npath = "{args.path}"')
+        print("Open it in Obsidian: 'Open folder as vault', or run: batsy vault open")
+        if not st["obsidian_cli"]:
+            print("Optional: turn on the Obsidian CLI (Settings → General → Command line interface) for Claude Code "
+                  "to rename and move notes with links kept intact.")
+    elif act == "status":
+        st = v.status()
+        print(f"{st['path']}\n{st['notes']} notes, {st['facts']} facts: "
+              + ", ".join(f"{n} {k}" for k, n in sorted(st["kinds"].items())))
+        print("skills: " + (", ".join(st["skills"]) or "none (run: batsy vault init)"))
+        print("obsidian CLI: " + ("found" if st["obsidian_cli"] else "not found (optional)"))
+        if st["orphans"]:
+            print("notes with no links: " + ", ".join(st["orphans"][:10]))
+    elif act == "search":
+        for h in v.search(text, limit=8, include_daily=True):
+            print(f"{h.score:5.1f}  {h.note.title} ({h.note.kind})" + (f"  <- {h.via}" if h.via else ""))
+    elif act == "remember":
+        if not text:
+            sys.exit('Usage: batsy vault remember "fact" [--about "Note"] [--kind person|project|place|setup|preference|topic]')
+        print(v.remember(text, about=args.about, kind=args.kind)[1])
+    elif act == "forget":
+        print(f"Forgotten (from {w})." if (w := v.forget(text)) else "No fact with that id.")
+    elif act == "read":
+        print(v.read(text) or "No such note.")
+    elif act == "link":
+        if len(args.text) != 2:
+            sys.exit('Usage: batsy vault link "Note A" "Note B"  (quote each name)')
+        print(v.link(*args.text))
+    elif act == "open":
+        v.open_in_obsidian()
 
 
 def cmd_projects(cfg, args) -> None:
@@ -387,12 +443,21 @@ def main() -> None:
     sub.add_parser("doctor", help="check the setup")
     sub.add_parser("reset", help="start a fresh conversation")
     sub.add_parser("stop", help="stop the conversation now (bind it to a keyboard shortcut)")
+    p = sub.add_parser("mode", help="switch between voice and chat mode")
+    p.add_argument("mode", choices=["voice", "chat", "toggle", "status"])
     sub.add_parser("usage", help="show token usage")
     sub.add_parser("spotify-login", help="connect your Spotify account")
     p = sub.add_parser("skills", help="list (or --forget) skills Batsy learned")
     p.add_argument("--forget", metavar="NAME")
     p = sub.add_parser("vocab", help="list (or --forget) the phrases Batsy knows for showing things")
     p.add_argument("--forget", metavar="PHRASE")
+    p = sub.add_parser("vault", help="the Obsidian memory vault: init, status, search, remember, forget, read, link, open")
+    p.add_argument("action", choices=["init", "status", "search", "remember", "forget", "read", "link", "open"])
+    p.add_argument("text", nargs="*", help="fact, search words, note title or fact id (link takes two note names)")
+    p.add_argument("--about", metavar="NOTE", help="remember: the note the fact belongs to (default: Me)")
+    p.add_argument("--kind", metavar="KIND", help="remember: type of a new note (person, project, place, setup, preference, topic)")
+    p.add_argument("--path", metavar="DIR", help="use this vault folder (e.g. an existing Obsidian vault)")
+    p.add_argument("--no-skills", action="store_true", help="init: don't install obsidian-skills")
     p = sub.add_parser("projects", help="your tracked projects; --scan GitHub + folders, --find TEXT, --update NAME")
     p.add_argument("--scan", action="store_true", help="rebuild the index of your GitHub repos and project folders")
     p.add_argument("--find", metavar="TEXT", help="which project a description matches")
@@ -404,4 +469,4 @@ def main() -> None:
     {"run": cmd_run, None: cmd_run, "chat": cmd_chat, "ask": cmd_ask,
      "doctor": cmd_doctor, "reset": cmd_reset, "usage": cmd_usage,
      "spotify-login": cmd_spotify_login, "vocab": cmd_vocab, "skills": cmd_skills,
-     "projects": cmd_projects, "stop": cmd_stop}[args.cmd](cfg, args)
+     "projects": cmd_projects, "stop": cmd_stop, "mode": cmd_mode, "vault": cmd_vault}[args.cmd](cfg, args)

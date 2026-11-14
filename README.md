@@ -40,7 +40,7 @@ Log out and back in once so the Arduino serial-port permission (`dialout` group)
 | "Batsy, stop" | stops talking |
 
 - **Follow-ups:** after Batsy answers, it listens for about 6 seconds, so you can just keep talking without saying "Batsy" again.
-- **Memory is local.** Everything is stored in SQLite on your laptop. Each request sends Claude only a short context block: your saved facts, the last 6 exchanges with one-line notes of what Batsy did, and up to 3 older exchanges found by a local full-text search. The full conversation is never sent, so requests stay small and fast however long you use it.
+- **Memory is local.** Conversations are stored in SQLite on your laptop and what Batsy knows about you lives in an Obsidian vault of Markdown notes on it too (see "Memory vault" below). Each request sends Claude only a short context block: your saved facts, the few notes related to the request, the last 6 exchanges with one-line notes of what Batsy did, and up to 3 older exchanges found by a local full-text search. The full conversation is never sent, so requests stay small and fast however long you use it.
 - **Interrupting:** say "Batsy" while it's talking.
 - **Risky actions** (`rm -rf`, `dnf remove`, shutdown, disk tools, force-push, etc.) are confirmed by voice first. Root commands go through `pkexec`, which shows the normal GNOME password dialog.
 - **Typing:** `batsy chat` (or `batsy ask "..."`) talks to the running assistant through a local socket.
@@ -146,6 +146,45 @@ Batsy says "Got it", then works out **which repo or folder it is**. It matches w
 **Finding files by what they're about:** "find my thermodynamics notes" · "where's the STL for the phone stand" · "find my arduino sketch for the servo". Batsy names the best match and asks "Want me to open it?"; say "yes", "the second one" or "no".
 
 **GitHub access:** public repos work straight away. Batsy uses `[github] user`, or works your username out from your git identity and your clones. For private repos, put `GITHUB_TOKEN=...` (a fine-grained read-only token) in `~/.config/batsy/env`, or run `gh auth login`. Check what it sees with `batsy projects --scan`, `batsy projects --find "the drone docs"` and `batsy projects --update robot`. The index refreshes in the background every 6 hours. `[projects] roots` limits where it looks.
+
+## Memory vault: an Obsidian knowledge graph of you
+
+What Batsy remembers about you is a folder of plain Markdown notes, linked with `[[wikilinks]]`, that you can open as a vault in [Obsidian](https://obsidian.md) and browse in graph view. Batsy reads and writes the files itself, so it works with Obsidian closed and with the local model; Obsidian is the window you look through.
+
+```
+~/Batsy/vault/
+  Me.md            you: a "Facts" list, plus a map linking to every other note
+  People/ Projects/ Places/ Setup/ Preferences/ Topics/     one note per thing
+  Daily/2026-11-15.md      what Batsy learned that day (a timeline)
+  CLAUDE.md                the rules Claude Code follows in this vault
+  .claude/skills/          the official obsidian-skills
+```
+
+- **Saving:** "Batsy, remember my robot's mentor is Dr. Rao" adds a fact to the *Robot project* note (created and linked from *Me* if new). Duplicates are skipped. Each fact ends in an Obsidian block id (`^a1b2c`), so `batsy vault forget a1b2c` (or Claude, when you ask it by voice) removes exactly that line. The small local model only has `remember`; recall comes from the notes attached to each request.
+- **The graph builds itself:** a mention of an existing note becomes a `[[wikilink]]`, and when a note is created later, earlier mentions of it are linked too.
+- **Recall follows the links:** each request gets the best-matching notes *and* the notes they link to or are linked from, so asking about the robot also brings in its mentor and its microcontroller. This is added to the same short context block as before, capped at about 600 characters per note and 3 notes.
+- **Claude Code uses it too.** `batsy vault init` installs the [obsidian-skills](https://github.com/obsidianmd/obsidian-skills) into the vault, and every Claude Code hand-off is told where the vault is. It saves new facts through `batsy vault remember`, the same code path as voice, so notes always have the same shape. If you turn on the Obsidian CLI (Obsidian → Settings → General → Command line interface, app must be running), Claude Code can also rename and move notes with links kept intact. Batsy itself never needs the CLI.
+- **Your existing facts move over** the first time the vault opens, keeping their ids.
+
+```
+batsy vault init                       # create the vault, install obsidian-skills
+batsy vault open                       # open it in Obsidian
+batsy vault status                     # notes, facts, skills, notes with no links
+batsy vault search "robot mentor"      # what the graph would bring up
+batsy vault remember "Prefers PETG" --about "3D printing" --kind preference
+batsy vault link "Robot project" "PID control"
+batsy vault forget a1b2c
+```
+
+**Use a vault you already have:** in `~/.config/batsy/config.toml` set
+
+```
+[vault]
+path = "~/Documents/MyVault"
+base = "Batsy"       # Batsy's notes stay in MyVault/Batsy/; your own notes are untouched but can be linked to
+```
+
+Notes you add or edit by hand in Obsidian are picked up on the next request (keep the `## Facts` bullets and their `^id` endings if you want Batsy to list and forget them). Turn it off with `[vault] enabled = false` (memory then falls back to SQLite facts). Only the few notes that match a request are sent to Claude, never the whole vault; don't put secrets in it.
 
 ## Files between your Mac and Batsy (Tailscale)
 
@@ -273,7 +312,8 @@ Batsy controls the Spotify app on your iPad through Spotify Connect, using the S
 |---|---|
 | `~/.config/batsy/env` | `ANTHROPIC_API_KEY=...` (chmod 600) |
 | `~/.config/batsy/config.toml` | settings: model, effort, wake words, voice, thresholds (see `packaging/config.example.toml`) |
-| `~/.local/share/batsy/memory.db` | local memory (SQLite): every exchange, the actions taken, and remembered facts |
+| `~/.local/share/batsy/memory.db` | local memory (SQLite): every exchange and the actions taken (facts live in the vault) |
+| `~/Batsy/vault/`                 | memory vault: Markdown notes about you, openable in Obsidian |
 | `~/.local/share/batsy/skills/` | skills Batsy wrote for itself |
 | `~/.local/share/batsy/batsy.log` | log: what it heard, said and ran |
 | `~/Batsy/` | Batsy's workspace (Arduino sketches in `~/Batsy/arduino/`) |

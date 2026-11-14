@@ -118,6 +118,13 @@ class Batsy:
             self.overlay.on_stop = self.end_conversation  # "~" pressed in the overlay
             self.speaker.on_idle = lambda: self.overlay.send("quiet")  # stopped talking: stop showing "Speaking"
         self._turn_markers: list[tuple[str, str]] = []
+        self.chat_mode = False
+        self.mode_changed = threading.Event()
+        from batsy.chat_server import ChatServer
+        self.chat_server = ChatServer(self) if cfg.get("chat.enabled") else None
+        if self.chat_server:
+            self.chat_server.start()
+            self.chat_mode = self.chat_server.modes.state.get("style") == "chat"
         self.saver_on = False
         self.saver_preview_until = 0.0
         self._saver_dirty = False
@@ -494,7 +501,8 @@ class Batsy:
         req["done"].set()
         self.confirm_request = None
 
-    def run_turn(self, text: str, source: str, say, abort: threading.Event, confirm) -> str:
+    def run_turn(self, text: str, source: str, say, abort: threading.Event, confirm,
+                 conversation_id: int | None = None) -> str:
         """Run one request through the brain, then honour any restart/reset the tools asked for."""
         spoke = []
 
@@ -502,10 +510,16 @@ class Batsy:
             if not spoke and self.speaker.idle() and source == "voice" and not abort.is_set():
                 self.speaker.say(random.choice(FILLERS))
             spoke.append(name)
+            if source == "chat" and self.chat_server:
+                self.chat_server.bus.publish("tool_start", name=name)
 
         n, t0 = _norm(text), time.time()
         self.last_turn = t0
-        known = self.learner.recall(n)  # asked before and answered by a model: instant
+        live_id = f"voice-{time.time_ns()}" if source == "voice" else None
+        if live_id and self.chat_server:
+            self.chat_server.bus.publish("turn_start", id=live_id, conversation=self.chat_server.conversations.active_id,
+                                         source="voice", transcript=text)
+        known = self.learner.recall(n) if source != "chat" else None  # cached replies use voice style
         if known:
             for sentence in re.split(r"(?<=[.!?])\s+", known):
                 say(sentence)
@@ -513,13 +527,28 @@ class Batsy:
             self.brain.memory.add_exchange(source, text, known, ["answered from memory"])
             return known
         with self.turn_lock:
+            memory = self.brain.memory
+            previous_cid = getattr(memory.turn_state, "conversation_id", None)
+            conversation_id = conversation_id or (self.chat_server.conversations.active_id if self.chat_server else None)
+            memory.turn_state.conversation_id = conversation_id
             self.confirm_handler = confirm
+            raw_parts = []
+            old_delta = getattr(self.brain, "on_delta", None)
+            def delta(part):
+                raw_parts.append(part)
+                if live_id and self.chat_server:
+                    self.chat_server.bus.publish("text_delta", id=live_id, text=part)
+                if old_delta:
+                    old_delta(part)
+            self.brain.on_delta = delta
             self._turn_markers = []
             self.brain.route, self.brain.last_actions = "full", []
             try:
                 reply = self.brain.ask(text, source, say, abort, on_tool)
             finally:
                 self.confirm_handler = self._confirm_console
+                self.brain.on_delta = old_delta
+                memory.turn_state.conversation_id = previous_cid
             route = getattr(self.brain, "route", "full")
             secs = time.time() - t0
             self.learner.record(text, n, route, secs, reply)
@@ -529,6 +558,17 @@ class Batsy:
             if route in ("quick", "claude") and plain and not abort.is_set():
                 self.learner.remember(text, n, reply)
             self._learn_phrase(text)
+            if self.chat_server:
+                memory = self.brain.memory
+                with memory.lock, memory.db:
+                    row = memory.db.execute("SELECT id FROM exchanges WHERE user=? ORDER BY id DESC LIMIT 1", (text,)).fetchone()
+                    if row:
+                        cid = conversation_id
+                        memory.db.execute("UPDATE exchanges SET conversation_id=?,reply_raw=?,style=?,brain=? WHERE id=?",
+                                          (cid, "".join(raw_parts), "chat" if source == "chat" else "voice", route, row["id"]))
+            if live_id and self.chat_server:
+                self.chat_server.bus.publish("turn_done", id=live_id, conversation=self.chat_server.conversations.active_id,
+                                             reply="".join(raw_parts), brain=route)
             learned = getattr(self.brain, "last_skill_run", None)
             if learned:
                 self.last_skill = {"name": learned, "request": text, "t": time.time()}
@@ -550,6 +590,8 @@ class Batsy:
     def _apply_flags(self) -> None:
         flags = self.ctx.flags
         if flags.pop("new_conversation", False):
+            if self.chat_server:
+                self.chat_server.conversations.active_id = self.chat_server.conversations.create("Voice conversation")
             self.brain.reset()
         if flags.pop("restart", False):
             self.speaker.wait_idle(15)
@@ -579,6 +621,9 @@ class Batsy:
 
         n = _norm(text)
         self.last_raw_text = text.strip()
+        if n in {"chat mode", "text mode", "open chat"}:
+            self.switch_mode("chat")
+            return True
         if n in STOP_WORDS:
             self.end_conversation()
             return True
@@ -752,6 +797,10 @@ class Batsy:
         self.voiceprint = VoicePrint(self.cfg)
         ControlServer(self).start()
         self.ears.start()
+        if self.chat_server:
+            self.chat_server.open()
+            if self.chat_mode:
+                self.switch_mode("chat")
         self.speaker.say(lifecycle.started())  # "Batsy online." or "I'm back. Updated: 23 files changed."
         log.info("listening for wake word")
         self.automator.start()  # in the background: turn repeated model requests into instant code
@@ -762,6 +811,16 @@ class Batsy:
         errors: list[float] = []
         while True:
             try:
+                if self.chat_mode:
+                    if self.ears.stream:
+                        self.ears.close()
+                        self.ears.stream = None
+                    self.mode_changed.wait(1)
+                    self.mode_changed.clear()
+                    if not self.chat_mode:
+                        self.ears.reopen()
+                        self.ears.drain()
+                    continue
                 if self.listen_requested.is_set():  # Batsy just asked a question: hear the answer, no wake word
                     self.listen_requested.clear()
                     self.speaker.wait_idle()
@@ -842,6 +901,23 @@ class Batsy:
                     self.ears.reopen()
                     errors.clear()
                 time.sleep(0.2)
+
+    def switch_mode(self, mode: str) -> None:
+        self.chat_mode = mode == "chat"
+        if self.chat_server:
+            self.chat_server.modes.set_mode(mode)
+        if self.chat_mode:
+            self.speaker.stop()
+            self.speaker.enabled = False
+            if self.overlay.enabled:
+                self.overlay.hide()
+            if self.chat_server:
+                self.chat_server.open()
+        else:
+            self.speaker.enabled = True
+            if self.overlay.enabled:
+                self.overlay.listen()
+        self.mode_changed.set()
 
 
     def _self_command(self, n: str) -> bool:
@@ -1163,6 +1239,20 @@ class ControlServer(threading.Thread):
                 finally:
                     send({"yes": bool(yes)})
                 return
+            if "mode" in req:
+                try:
+                    mode = req["mode"]
+                    if mode == "toggle":
+                        mode = "voice" if self.app.chat_mode else "chat"
+                    if mode == "status":
+                        send({"say": "Chat mode." if self.app.chat_mode else "Voice mode."})
+                    else:
+                        self.app.switch_mode(mode)
+                        send({"say": f"Switched to {mode} mode."})
+                except ValueError as e:
+                    send({"say": str(e)})
+                send({"done": True})
+                return
             text = req.get("text", "").strip()
             if text:
                 self.app.overlay.heard(text)  # typed turns are their own exchange on screen too
@@ -1177,7 +1267,7 @@ class ControlServer(threading.Thread):
             send({"done": True})
 
 
-def ask_daemon(text: str, speak: bool = False) -> bool:
+def ask_daemon(text: str, speak: bool = False, mode: str | None = None) -> bool:
     """Send text to a running daemon and print its reply. Returns False if no daemon is running."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -1185,7 +1275,7 @@ def ask_daemon(text: str, speak: bool = False) -> bool:
     except OSError:
         return False
     with s, s.makefile("rw") as f:
-        f.write(json.dumps({"text": text, "speak": speak}) + "\n")
+        f.write(json.dumps({"text": text, "speak": speak, **({"mode": mode} if mode else {})}) + "\n")
         f.flush()
         for line in f:
             msg = json.loads(line)

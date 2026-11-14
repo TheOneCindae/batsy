@@ -50,4 +50,4 @@ batsy = "batsy.cli:main"
 include = ["batsy*"]
 
 [tool.setuptools.package-data]
-batsy = ["ui/*.html", "ui/*.css", "ui/*.js", "ui/vendor/*", "ui/fonts/*"]
+batsy = ["ui/*.html", "ui/*.css", "ui/*.js", "ui/vendor/*", "ui/fonts/*", "chat_ui/*"]

@@ -52,6 +52,28 @@ DEFAULTS = {
         "all_facts_below": 15,     # send every remembered fact while there are this few...
         "max_facts": 8,            # ...otherwise only the most relevant ones
     },
+    # Long-term memory as an Obsidian vault (plain Markdown, a knowledge graph you can browse in Obsidian).
+    # Point `path` at an existing vault and set `base` (e.g. "Batsy") to keep Batsy's notes in one sub-folder.
+    "vault": {
+        "enabled": True,
+        "path": "~/Batsy/vault",
+        "base": "",               # sub-folder of the vault for Batsy's notes; "" = the vault root
+        "auto_link": True,        # turn mentions of existing notes into [[wikilinks]]
+        "daily_log": True,        # log what Batsy learned in Daily/YYYY-MM-DD.md
+        "context_notes": 3,       # related notes attached to each request
+        "context_chars": 600,     # max size of each attached note
+        "facts_per_note": 6,
+        "neighbors": 2,           # linked/backlinked notes pulled in per strong match
+    },
+    "chat": {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 8765,
+        "open_browser": True,
+        "default_mode": "voice",
+        "brain": "auto",
+        "history_in_context": 8,
+    },
     # Who you are: both brains (local and Claude) use this to pitch answers and expect your vocabulary.
     "user": {
         "name": "",               # what Batsy calls you; empty = your login name

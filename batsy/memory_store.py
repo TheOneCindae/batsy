@@ -35,6 +35,7 @@ def _clip(text: str, n: int) -> str:
 class MemoryStore:
     def __init__(self, path=DB_PATH):
         self.lock = threading.Lock()
+        self.turn_state = threading.local()
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.fts = True
@@ -100,10 +101,15 @@ class MemoryStore:
             self.db.execute("INSERT OR REPLACE INTO state VALUES ('session_start', ?)", (str(time.time()),))
 
     def recent(self, limit: int, max_age_s: float) -> list[sqlite3.Row]:
-        since = max(self.session_start(), time.time() - max_age_s)
+        cid = getattr(self.turn_state, "conversation_id", None)
+        since = time.time() - max_age_s if cid is not None else max(self.session_start(), time.time() - max_age_s)
         with self.lock:
-            rows = self.db.execute("SELECT * FROM exchanges WHERE t >= ? ORDER BY id DESC LIMIT ?",
-                                   (since, limit)).fetchall()
+            if cid is None:
+                rows = self.db.execute("SELECT * FROM exchanges WHERE t >= ? ORDER BY id DESC LIMIT ?",
+                                       (since, limit)).fetchall()
+            else:
+                rows = self.db.execute("SELECT * FROM exchanges WHERE t >= ? AND conversation_id=? ORDER BY id DESC LIMIT ?",
+                                       (since, cid, limit)).fetchall()
         return rows[::-1]
 
     def search_exchanges(self, text: str, limit: int, before_id: int | None) -> list[sqlite3.Row]:
@@ -205,11 +211,17 @@ class MemoryStore:
             m["related_exchanges"] = related
         parts = []
 
-        facts = self.all_facts()
-        if len(facts) > m["all_facts_below"]:
-            facts = self.search_facts(text, m["max_facts"])
-        if facts:
-            parts.append("[Things you remember]\n" + "\n".join(f"- ({f['id']}) {f['fact']}" for f in facts))
+        from batsy import vault  # lazy: vault imports this module
+
+        v = vault.get(cfg)
+        if v is not None:  # the vault is the memory; SQLite keeps the conversation log and documents
+            parts.extend(v.context(text, m))
+        else:
+            facts = self.all_facts()
+            if len(facts) > m["all_facts_below"]:
+                facts = self.search_facts(text, m["max_facts"])
+            if facts:
+                parts.append("[Things you remember]\n" + "\n".join(f"- ({f['id']}) {f['fact']}" for f in facts))
 
         docs = self.search_documents(text, 1) if len(_terms(text)) >= 2 else []
         if docs:
