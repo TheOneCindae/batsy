@@ -100,9 +100,11 @@ class Batsy:
             self.brain.status = lambda text: self.overlay.send("status", text=text)
         self.routines = Routines(self)
         from batsy import codex_adapter
+        from batsy import claude_code
         from batsy.tasks import TaskTalk
 
         codex_adapter.CFG, codex_adapter.announce = cfg, self.announce
+        claude_code.CFG, claude_code.announce = cfg, self.announce
         self.listen_requested = threading.Event()  # Batsy asked something: listen without the wake word
         self.tasks = TaskTalk(self)
         from batsy.projects import ProjectTalk
@@ -274,8 +276,10 @@ class Batsy:
         if abort is not None:
             abort.set()
         from batsy import codex_adapter
+        from batsy import claude_code
 
         codex_adapter.cancel()  # stop the Codex run itself, not just its voice
+        claude_code.cancel()  # stop a Claude run too
         self.overlay.muted = True
         self.listen_requested.clear()
         self.speaker.stop()
@@ -590,7 +594,7 @@ class Batsy:
                     self.chat_server.bus.publish("turn_done", id=live_id, conversation=conversation_id, reply="", stopped=True)
                 return ""
             brain = self.brain
-            if source == "chat" and brain_preference in ("local", "codex"):
+            if source == "chat" and brain_preference in ("local", "codex", "claude"):
                 if not hasattr(self, "_chat_local_brain"):
                     from batsy.local_brain import LocalBrain
                     self._chat_local_brain = LocalBrain(self.cfg, self.registry)

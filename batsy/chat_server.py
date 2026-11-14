@@ -229,8 +229,9 @@ class ChatServer:
                         else:
                             owner.conversations.stop(turn_id or None)
                             owner.app.speaker.stop()
-                        from batsy import codex_adapter
+                        from batsy import claude_code, codex_adapter
                         codex_adapter.cancel(thread="turn" if turn_id.startswith("voice-") else f"chat-{turn_id}")
+                        claude_code.cancel(thread="turn" if turn_id.startswith("voice-") else f"chat-{turn_id}")
                         self._json({"ok": True})
                     elif self.path == "/api/conversation/new":
                         cid = owner.conversations.create()
@@ -293,7 +294,7 @@ class ChatServer:
                         self._json({"state": state})
                     elif self.path == "/api/brain":
                         preference = data.get("brain", "auto")
-                        if preference not in ("auto", "local", "codex"):
+                        if preference not in ("auto", "local", "codex", "claude"):
                             return self._json({"error": "invalid brain"}, 400)
                         owner.brain_preference = preference
                         self._json({"brain": preference})

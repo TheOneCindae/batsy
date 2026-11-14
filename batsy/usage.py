@@ -1,4 +1,4 @@
-"""Token accounting from usage.jsonl (one row per Codex request) for `batsy usage` and the screensaver."""
+"""Token accounting for Codex and Claude CLI requests used by `batsy usage` and the screensaver."""
 import json
 import time
 
@@ -19,8 +19,8 @@ PRICES = {
 
 
 def _cost(r: dict) -> float:
-    if r.get("model", "").startswith(("local:", "codex")):
-        return 0.0  # the laptop is free; Codex is covered by the Pro subscription
+    if r.get("model", "").startswith(("local:", "codex", "claude-code")):
+        return 0.0  # local inference is free; Codex and Claude CLI usage is subscription-managed
     pin, pout, pread = PRICES.get(r.get("model", ""), PRICES["codex-opus-5-5"])
     return (r["in"] * pin + r["out"] * pout + r["cache_read"] * pread + r["cache_write"] * pin * 1.6) / 1e6
 

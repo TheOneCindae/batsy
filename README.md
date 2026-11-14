@@ -10,7 +10,7 @@ cd batsy
 batsy -v              # start it now; it also starts automatically at login
 ```
 
-Log out and back in once so the Arduino serial-port permission (`dialout` group) applies. Run `codex` once and log in with your Codex Pro account. Then run `batsy selftest --all`, which checks every part and says how to fix anything that fails. **The full step-by-step setup and test checklist is in [SETUP_AND_TEST.md](SETUP_AND_TEST.md).**
+Log out and back in once so the Arduino serial-port permission (`dialout` group) applies. Run `codex` once and log in if you want Codex; run `claude` once and sign in if you want Claude. Batsy works with either installed CLI and the chat brain picker lets you choose. Then run `batsy selftest --all`, which checks every part and says how to fix anything that fails. **The full step-by-step setup and test checklist is in [SETUP_AND_TEST.md](SETUP_AND_TEST.md).**
 
 ## Using it
 
@@ -49,7 +49,7 @@ Log out and back in once so the Arduino serial-port permission (`dialout` group)
 
 When Batsy is running, its authenticated chat page is served on `127.0.0.1:8765`. Switch modes with `batsy mode chat`, `batsy mode voice`, `batsy mode toggle`, or say **"Batsy, chat mode"**. The browser chat shares the active conversation with voice turns and can be switched back from its header.
 
-- Replies stream into a local browser page with Markdown and fenced code, copy buttons, and basic syntax colours. The page includes conversation history, search, rename/archive, stop, and a brain picker (`Auto`, `Local`, `Codex`).
+- Replies stream into a local browser page with Markdown and fenced code, copy buttons, and basic syntax colours. The page includes conversation history, search, rename/archive, stop, and a brain picker (`Auto`, `Local`, `Codex`, `Claude`). Choose a cloud assistant per chat; its CLI must be installed and signed in.
 - Drop a PDF or image onto the page to index it through Batsy's document pipeline. Risky tool actions wait for an Allow/Deny dialog; chat turns can be stopped while they run.
 - The composer mic button records one utterance through Batsy's existing microphone and transcription stack, then puts the transcript in the input box.
 - `Listen` and `Read aloud` are independent switches. Assistant replies have Copy, Read aloud, and Regenerate actions; user messages can be edited into the composer. Export downloads the current thread as Markdown.
@@ -330,7 +330,7 @@ Batsy controls the Spotify app on your iPad through Spotify Connect, using the S
 
 | Path | What |
 |---|---|
-| `~/.config/batsy/env` | Reserved for non-AI environment settings (chmod 600); Codex uses `codex login` |
+| `~/.config/batsy/env` | Reserved for non-AI environment settings (chmod 600); Codex and Claude authenticate through their CLIs |
 | `~/.config/batsy/config.toml` | settings: model, effort, wake words, voice, thresholds (see `packaging/config.example.toml`) |
 | `~/.local/share/batsy/memory.db` | local memory (SQLite): every exchange and the actions taken (facts live in the vault) |
 | `~/Batsy/vault/`                 | memory vault: Markdown notes about you, openable in Obsidian |
@@ -338,19 +338,19 @@ Batsy controls the Spotify app on your iPad through Spotify Connect, using the S
 | `~/.local/share/batsy/batsy.log` | log: what it heard, said and ran |
 | `~/Batsy/` | Batsy's workspace (Arduino sketches in `~/Batsy/arduino/`) |
 
-## The brain: local and free (with Codex on request)
+## The brain: local, Codex, or Claude
 
 - **Default: a local AI.** `qwen3.5:4b` runs in Ollama on the laptop. It's free, works offline and has no limits. It's tuned for a local model and real back-and-forth conversation: the model stays loaded, its instructions are tiny (about 200 tokens), memory is short, tool output is trimmed, and replies are spoken as they stream.
-- **Complex requests go to Codex automatically** when the CLI is installed and logged in. Code, Arduino sketches, debugging, project work, and explicit "ask Codex…" requests use the workspace-write sandbox; everything else stays local and offline. Turn automatic hand-off off with `[local] auto_codex = false`. One-time setup: `codex login`.
+- **Choose a backend in chat:** `Auto` uses local Ollama for everyday requests and Codex for complex work by default. `Local`, `Codex`, and `Claude` force that backend for the current chat. Install and sign in to the corresponding CLI (`codex login` or `claude`). Both cloud CLIs use Batsy's command safety hook and can read the configured Obsidian context.
+- **Automatic routing:** `[local] auto_codex = true` enables Codex for complex requests (default). Set `[local] auto_claude = true` to enable Claude as a fallback; when both are enabled, Codex gets priority. Explicit voice requests such as “ask Claude to …” or “ask Codex to …” select that assistant. Each CLI keeps its own login and Batsy budget settings (`[codex_budget]` and `[claude_budget]`).
 - **Faster but simpler:** choose a smaller Ollama model in `[local] model` if needed.
-- **Have a Codex API key?** Set `[brain] engine = "codex"` to use the full Codex agent instead.
-- The no-token local commands (music, routines, camera, time, volume, "show me a picture of X") work the same with either brain.
+- Local commands (music, routines, camera, time, volume, "show me a picture of X") continue to use Batsy's local tools.
 
 ## How it works
 
 - **Wake word:** Vosk (offline) spots "Batsy" continuously. Whisper then confirms it, which filters out false alarms.
 - **Speech-to-text:** faster-whisper `small.en` running locally (falls back to Vosk).
-- **Brain:** a local Ollama model by default; Codex (Pro) when you say "ask Codex"; or the Codex API agent (Opus 5.5) if you have a key.
+- **Brain:** a local Ollama model by default, with optional Codex and Claude Code CLI backends.
 - **Voice:** Piper `en_GB-alan-medium`, local and neural (falls back to espeak-ng). Replies are spoken sentence by sentence as they stream in.
 - **Tools:** `batsy/tools/`: shell and background jobs, files, system status, screen and webcam, Arduino (`arduino-cli`), timers and monitors, memory, and self-written skills.
 
@@ -374,5 +374,5 @@ Batsy controls the Spotify app on your iPad through Spotify Connect, using the S
 
 ## Cost and safety
 
-Every request sends the conversation to the Codex API, billed to your key. Prompt caching keeps repeat turns cheap. Batsy runs commands as you, with your permissions. Read the log if you want to see exactly what it did.
+Cloud requests go through the selected CLI and its account. Batsy runs permitted commands as you, with risky shell commands checked by its safety hook. Review the local usage log if you want to see request accounting.
 # batsy

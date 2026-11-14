@@ -6,10 +6,18 @@
 model = "qwen3.5:4b"
 # Send coding, debugging, project work and other complex requests to cloud Codex.
 auto_codex = true
+# Optionally route complex requests to Claude Code instead. If both automatic
+# backends are enabled, Codex takes priority. Chat users can always choose either.
+auto_claude = false
 
 [codex]
 # Leave blank to use the Codex CLI's configured default model.
 model = ""
+
+[claude]
+# Optional model override; leave blank to use the Claude CLI default.
+model = ""
+# Sign in once with `claude` to enable Claude requests.
 
 [user]
 # name = "Jonathan"

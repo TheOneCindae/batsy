@@ -2,7 +2,7 @@
 
 Tuned for speed on a CPU with 8 GB RAM: a ~3B model kept loaded, a tiny system prompt (prompt reading is
 the slow part on CPU), few compact tools, short tool outputs, and replies streamed straight into speech.
-"Ask Codex ..." hands a request to Codex on the user's Pro plan, only when they say so.
+"Ask Codex ..." or "Ask Claude ..." hands a request to the chosen CLI assistant.
 """
 import getpass
 import json
@@ -58,10 +58,12 @@ LOCAL_TOOLS = {
                  {"fact": {"type": "string"}, "about": {"type": "string"}}, ["fact"]),
     "camera": ("Open or close the live camera window.",
                {"action": {"type": "string", "enum": ["open", "close"]}}, ["action"]),
-    "look": ("See the camera (what the user is holding/showing) or the screen. Codex looks and answers.",
+    "look": ("See the camera (what the user is holding/showing) or the screen. The selected cloud assistant looks and answers.",
              {"source": {"type": "string", "enum": ["webcam", "screen"]}, "question": {"type": "string"}},
              ["source", "question"]),
     "ask_codex": ("Hand a hard request to Codex (expert answers, code, careful reasoning). Codex replies to the user.",
+                   {"request": {"type": "string"}}, ["request"]),
+    "ask_claude": ("Hand a hard request to Claude Code (expert answers, code, careful reasoning). Claude replies to the user.",
                    {"request": {"type": "string"}}, ["request"]),
 }
 
@@ -185,9 +187,10 @@ class LocalBrain:
             {"type": "function", "function": {"name": name, "description": desc,
                                               "parameters": {"type": "object", "properties": props, "required": req}}}
             for name, (desc, props, req) in LOCAL_TOOLS.items()
-            if name in registry.tools or name in ("ask_codex", "look")  # these two are handled by the brain itself
+            if name in registry.tools or name in ("ask_codex", "ask_claude", "look")  # handled by the brain itself
         ]
         self._codex_installed = bool(shutil.which("codex"))
+        self._claude_installed = bool(shutil.which("claude"))
         self.skills = None            # SkillBook, set by the app
         self.last_skill_run: str | None = None
         self.last_doc = None          # (path, time) of the file worked on last, for follow-ups
@@ -201,6 +204,15 @@ class LocalBrain:
         allowed = self.cfg.get("local.auto_codex") or self.brain_preference == "codex"
         return (self._codex_installed and allowed and self.brain_preference != "local"
                 and codex_adapter.over_budget(self.cfg) is None)
+
+    @property
+    def claude_ok(self) -> bool:
+        """Claude Code is installed, enabled for auto-routing or explicitly selected, and under budget."""
+        from batsy import claude_code
+
+        allowed = self.cfg.get("local.auto_claude") or self.brain_preference == "claude"
+        return (self._claude_installed and allowed and self.brain_preference != "local"
+                and claude_code.over_budget(self.cfg) is None)
 
     # --- Ollama -------------------------------------------------------------
     def _options(self) -> dict:
@@ -304,7 +316,7 @@ class LocalBrain:
         if not isinstance(obj, dict) or "name" not in obj:
             return []
         want = re.sub(r"[^a-z]", "", str(obj["name"]).lower())
-        name = next((n for n in [*LOCAL_TOOLS, "look", "ask_codex"] if n.replace("_", "") == want), None)
+        name = next((n for n in [*LOCAL_TOOLS, "look", "ask_codex", "ask_claude"] if n.replace("_", "") == want), None)
         if name is None:
             return []
         return [{"function": {"name": name, "arguments": obj.get("parameters") or obj.get("arguments") or {}}}]
@@ -345,7 +357,18 @@ class LocalBrain:
             self.route = "codex"
             self._codex(text, context, lambda s: (spoken.append(s), say(s)),
                          lambda kind, arg: self.visual(kind, arg) if self.visual and not abort.is_set() else None,
-                         on_tool, actions, force=True)
+                         on_tool, actions)
+            return self._finish(source, text, spoken, actions, abort)
+        if self.chat_style and self.brain_preference == "claude":
+            if not self._claude_installed:
+                message = "Claude Code isn't installed. Install it and sign in with the claude command first."
+                say(message)
+                spoken.append(message)
+                return self._finish(source, text, spoken, actions, abort)
+            self.route = "claude"
+            self._claude(text, context, lambda s: (spoken.append(s), say(s)),
+                         lambda kind, arg: self.visual(kind, arg) if self.visual and not abort.is_set() else None,
+                         on_tool, actions)
             return self._finish(source, text, spoken, actions, abort)
 
         def emit(sentence: str) -> None:
@@ -361,6 +384,14 @@ class LocalBrain:
         from batsy.learning import ACTION, norm
 
         from batsy import model3d
+
+        explicit_claude = ASK_CLAUDE.match(text.strip(" .!?"))
+        if explicit_claude and self._claude_installed:
+            request = re.sub(r"\banyway\b", "", explicit_claude.group(1), flags=re.I).strip()
+            emit("Asking Claude.")
+            self._claude(request, context, emit, on_marker, on_tool, actions,
+                         force=bool(re.search(r"\banyway\b", text, re.I)))
+            return self._finish(source, text, spoken, actions, abort)
 
         explicit = ASK_CODEX.match(text.strip(" .!?"))
         if explicit and self._codex_installed:  # "ask Codex to ...": straight to Codex, nothing local
@@ -443,6 +474,11 @@ class LocalBrain:
             self._codex(text, context, emit, on_marker, on_tool, actions)
             return self._finish(source, text, spoken, actions, abort)
 
+        if self.claude_ok and ai_route(text) == "codex":
+            self.route = "claude"
+            self._claude(text, context, emit, on_marker, on_tool, actions)
+            return self._finish(source, text, spoken, actions, abort)
+
         if len(text.split()) <= 14 and not NEEDS_TOOLS.search(text.lower()) and not COMMAND.match(text.lower()):
             self.route = "quick"
             if self._quick(text, emit, on_marker, abort):
@@ -482,6 +518,11 @@ class LocalBrain:
                 if name == "ask_codex" and self.codex_ok:
                     self.route = "codex"
                     self._codex(args.get("request") or text, context, emit, on_marker, on_tool, actions)
+                    handed_off = True
+                    break
+                if name == "ask_claude" and self.claude_ok:
+                    self.route = "claude"
+                    self._claude(args.get("request") or text, context, emit, on_marker, on_tool, actions)
                     handed_off = True
                     break
                 if on_tool:
@@ -596,12 +637,24 @@ class LocalBrain:
         speak_stream(lambda on_text: ask_codex(request, context, force=force, on_text=on_text), emit, on_marker, self.on_delta)
         actions.append("answered by Codex")
 
+    def _claude(self, request, context, emit, on_marker, on_tool, actions, force: bool = False) -> None:
+        """Answer with Claude Code, streaming its response to speech and the chat view."""
+        if on_tool:
+            on_tool("ask_claude")
+        log.info("routing to Claude: %s", request[:120])
+        self.status("Asking Claude")
+        speak_stream(lambda on_text: ask_claude(request, context, force=force, on_text=on_text,
+                                                chat_style=self.chat_style),
+                     emit, on_marker, self.on_delta)
+        actions.append("answered by Claude")
+
     def reset(self) -> None:
         with self.lock:
             self.memory.new_session()
 
 
 ASK_CODEX = re.compile(r"(?:hey |ok )?ask (?:codex|cloud|clawed)(?: to| about| if| whether)?[,\s]+(.+)", re.I | re.S)
+ASK_CLAUDE = re.compile(r"(?:hey |ok )?ask (?:claude|cloud|clawed|claud)(?: code)?(?: to| about| if| whether)?[,\s]+(.+)", re.I | re.S)
 CODEX_BRIEF = """You are the expert brain behind Batsy, a voice assistant on the user's Fedora laptop. Your reply is \
 spoken aloud. The user, {user}, is {about}: talk to them at that level, in their vocabulary.{github} You can work anywhere on this laptop: read, edit and create files in any folder (use absolute paths; \
 home is {home}, Batsy's own code is {code}: to change Batsy itself, edit those files in place, never copies \
@@ -733,3 +786,36 @@ def ask_codex(prompt: str, context: str = "", timeout: int = 900, force: bool = 
     return codex_adapter.run(full, "ask: " + prompt[:40], cwd=home, timeout=timeout, force=force, on_text=on_text, args=[
         "--permission-mode", "acceptEdits", "--add-dir", "/",
         "--allowedTools", "Read,Write,Edit,MultiEdit,Glob,Grep,Bash,WebSearch,WebFetch,TodoWrite"])
+
+
+def ask_claude(prompt: str, context: str = "", timeout: int = 900, force: bool = False, on_text=None,
+               chat_style: bool = False) -> str:
+    """Run a request through the Claude Code CLI using the same local context and safety guard as Codex."""
+    from pathlib import Path
+
+    from batsy import claude_code
+    from batsy.config import Config
+    from batsy.vault import get as get_vault
+
+    cfg = claude_code.CFG or Config.load()
+    me = who(cfg)
+    github = (f" Their GitHub username is {me['github']} (use gh if installed, or the GitHub API; "
+              f"GITHUB_TOKEN may be set).") if me["github"] else ""
+    vault = get_vault(cfg)
+    vault_context = vault.claude_hint() if vault else ""
+    home = Path.home()
+    # Keep one shared task brief so either provider gets the same capabilities and guardrails.
+    brief = CODEX_BRIEF.replace("Codex", "Claude").replace("codex", "Claude")
+    if chat_style:
+        brief = brief.replace("No markdown or lists in the spoken part.",
+                              "This is typed chat: answer fully in useful Markdown and use fenced code blocks when helpful.")
+    full = brief.format(workspace=WORKSPACE, context=context + vault_context, request=prompt, home=home,
+                        code=Path(__file__).resolve().parent.parent, user=me["user"], about=me["about"],
+                        github=github, vault="")
+    args = ["--add-dir", "/", "--permission-mode", "acceptEdits",
+            "--allowedTools", "Read,Write,Edit,MultiEdit,Glob,Grep,Bash,WebSearch,WebFetch"]
+    model = cfg.get("claude.model")
+    if model:
+        args.extend(["--model", model])
+    return claude_code.run(full, "ask: " + prompt[:40], cwd=home, timeout=timeout, force=force,
+                           cfg=cfg, on_text=on_text, args=args)

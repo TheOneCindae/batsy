@@ -1,0 +1,234 @@
+"""Every Claude Code (Pro plan) call goes through here: exact token accounting, Batsy's own budgets, and the
+"running agents" list.
+
+Pro's real limits aren't available outside the official app, so Batsy keeps its own: a session budget over a
+rolling 5-hour window (like Pro's) and a weekly budget (calendar week). Near a limit it warns once; at the limit
+it refuses and Batsy answers with the local brain until the window resets (unless forced).
+"""
+import json
+import logging
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import threading
+import time
+
+from batsy import activity
+from batsy.config import DATA_DIR, WORKSPACE
+
+log = logging.getLogger("batsy.claude")
+USAGE_FILE = DATA_DIR / "usage.jsonl"
+LIMITS_FILE = DATA_DIR / "claude_limits.json"
+_warned: set[str] = set()
+_lock = threading.Lock()
+announce = None  # set by the app: speak a warning
+CFG = None       # set by the app
+
+
+def limits(cfg) -> dict:
+    lim = dict(cfg.get("claude_budget"))
+    if LIMITS_FILE.exists():
+        try:
+            lim.update(json.loads(LIMITS_FILE.read_text()))
+        except ValueError:
+            pass
+    return lim
+
+
+def set_limit(which: str, tokens: int) -> None:
+    data = json.loads(LIMITS_FILE.read_text()) if LIMITS_FILE.exists() else {}
+    data[f"{which}_tokens"] = int(tokens)
+    LIMITS_FILE.write_text(json.dumps(data))
+
+
+def _rows() -> list[dict]:
+    if not USAGE_FILE.exists():
+        return []
+    out = []
+    for line in USAGE_FILE.read_text().splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("model", "").startswith("claude-code"):
+            out.append(r)
+    return out
+
+
+def _tokens(r: dict) -> int:
+    return r["in"] + r["out"] + r["cache_read"] + r["cache_write"]
+
+
+def budget(cfg) -> dict:
+    """{session: {used, limit, resets_at, pct}, week: {...}}"""
+    lim = limits(cfg)
+    rows = _rows()
+    now = time.time()
+    hours = lim["session_hours"] * 3600
+    # Pro-style session: starts with the first request after the previous window ended
+    start = None
+    for r in rows:
+        if start is None or r["t"] >= start + hours:
+            start = r["t"]
+    if start is None or now >= start + hours:
+        s_used, s_reset = 0, None
+    else:
+        s_used, s_reset = sum(_tokens(r) for r in rows if r["t"] >= start), start + hours
+    lt = time.localtime(now)
+    week_start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday - lt.tm_wday, 0, 0, 0, 0, 0, -1))
+    w_used = sum(_tokens(r) for r in rows if r["t"] >= week_start)
+
+    def pack(used, limit, reset):
+        return {"used": used, "limit": limit, "resets_at": reset,
+                "pct": round(100 * used / limit, 1) if limit else None}
+
+    return {"session": pack(s_used, lim["session_tokens"], s_reset),
+            "week": pack(w_used, lim["weekly_tokens"], week_start + 7 * 86400),
+            "requests_week": sum(1 for r in rows if r["t"] >= week_start)}
+
+
+def over_budget(cfg) -> str | None:
+    """A sentence explaining why Claude is off limits right now, or None."""
+    b = budget(cfg)
+    for key, label in (("session", "this session's"), ("week", "this week's")):
+        x = b[key]
+        if x["limit"] and x["used"] >= x["limit"]:
+            when = time.strftime("%-I:%M %p" if key == "session" else "%A", time.localtime(x["resets_at"]))
+            return f"I've used {label} Claude budget, so I'll handle things myself until {when}."
+    return None
+
+
+def _warn(cfg) -> None:
+    b = budget(cfg)
+    warn_at = limits(cfg)["warn_at"]
+    for key in ("session", "week"):
+        x = b[key]
+        tag = f"{key}-{x['resets_at']}"
+        if x["limit"] and x["used"] >= warn_at * x["limit"] and tag not in _warned and announce:
+            _warned.add(tag)
+            announce(f"Heads up: {x['pct']:.0f} percent of your {key} Claude budget is used.")
+
+
+def settings() -> str:
+    """Claude Code settings for every Batsy call: a guard that voice-confirms risky shell commands."""
+    guard = f"{shlex.quote(sys.executable)} -m batsy.guard"
+    return json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": guard,
+                                                                                 "timeout": 120}]}]}})
+
+
+_running: dict[subprocess.Popen, str] = {}  # live `claude` processes -> the thread that started them
+
+
+def _start(argv, cwd, env) -> subprocess.Popen:
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)  # its own process group: cancelling also stops its tools
+    with _lock:
+        _running[proc] = threading.current_thread().name
+    return proc
+
+
+def _kill(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, 9)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def cancel(thread: str = "turn") -> int:
+    """Stop the Claude Code runs started by a voice turn (you said "stop", pressed "~" or closed the screen).
+    Background work (learning skills, picking pictures) carries on. Returns how many were stopped."""
+    with _lock:
+        procs = [p for p, t in _running.items() if t == thread and p.poll() is None]
+    for p in procs:
+        _kill(p)
+    if procs:
+        log.info("cancelled %d Claude Code run(s)", len(procs))
+    return len(procs)
+
+
+def _stream(exe, prompt, args, cwd, timeout, env, on_text) -> dict | str:
+    """Stream-json mode: text deltas go to on_text as they arrive; returns the final result object."""
+    proc = _start([exe, "-p", prompt, "--output-format", "stream-json", "--verbose",
+                   "--include-partial-messages", "--settings", settings(), *(args or [])], cwd, env)
+    killer = threading.Timer(timeout, _kill, args=(proc,))
+    killer.start()
+    result, turn_text = None, False
+    try:
+        for line in proc.stdout:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("type") == "stream_event":
+                e = ev.get("event", {})
+                if e.get("type") == "content_block_delta" and e.get("delta", {}).get("type") == "text_delta":
+                    on_text(e["delta"]["text"])
+                    turn_text = True
+                elif e.get("type") == "message_stop" and turn_text:
+                    on_text("\n")  # end of a turn: let a sentence without a full stop be spoken
+                    turn_text = False
+            elif ev.get("type") == "result":
+                result = ev
+        proc.wait()
+    finally:
+        killer.cancel()
+        with _lock:
+            _running.pop(proc, None)
+    if result is None:
+        return "That took too long." if proc.returncode in (-9, 137) else \
+            (proc.stderr.read().strip()[-300:] or "Claude didn't answer.")
+    return result
+
+
+def run(prompt: str, label: str, args: list[str] | None = None, cwd=WORKSPACE, timeout: int = 300,
+        force: bool = False, cfg=None, on_text=None) -> str:
+    """Run `claude -p` and return its text answer. Logs exact usage and respects budgets.
+    on_text(chunk) gets the answer as Claude writes it, so Batsy can start speaking at the first sentence."""
+    cfg = cfg or CFG
+    exe = shutil.which("claude")
+    if not exe:
+        return "Claude Code isn't installed. Run: npm install -g @anthropic-ai/claude-code, then claude to log in."
+    if not force and cfg is not None:
+        why = over_budget(cfg)
+        if why:
+            return why
+    env = dict(os.environ, PATH=f"{os.path.dirname(sys.executable)}:{os.path.expanduser('~/.local/bin')}:"
+                                f"{os.environ.get('PATH', '')}")
+    with activity.agent(label):
+        if on_text is not None:
+            data = _stream(exe, prompt, args, cwd, timeout, env, on_text)
+            if isinstance(data, str):
+                return data
+        else:
+            proc = _start([exe, "-p", prompt, "--output-format", "json", "--settings", settings(), *(args or [])],
+                          cwd, env)
+            try:
+                out, err = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _kill(proc)
+                proc.communicate()
+                return "That took too long."
+            finally:
+                with _lock:
+                    _running.pop(proc, None)
+            try:
+                data = json.loads(out)
+            except ValueError:
+                return (out.strip() or err.strip() or "Claude didn't answer.")[:3000]
+    u = data.get("usage") or {}
+    row = {"t": int(time.time()), "model": "claude-code", "label": label,
+           "in": int(u.get("input_tokens", 0)), "out": int(u.get("output_tokens", 0)),
+           "cache_read": int(u.get("cache_read_input_tokens", 0)),
+           "cache_write": int(u.get("cache_creation_input_tokens", 0)),
+           "secs": round(data.get("duration_ms", 0) / 1000, 1), "turns": data.get("num_turns")}
+    with _lock, open(USAGE_FILE, "a") as f:
+        f.write(json.dumps(row) + "\n")
+    log.info("claude-code %s: %s", label, row)
+    if cfg is not None:
+        _warn(cfg)
+    return str(data.get("result") or "").strip() or "Claude didn't answer."

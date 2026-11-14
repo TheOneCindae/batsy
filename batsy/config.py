@@ -1,7 +1,7 @@
 """Paths and user configuration.
 
-Config lives in ~/.config/batsy/config.toml (every key optional), the API key in
-Codex authentication is managed by `codex login`; no API key is stored here.
+Config lives in ~/.config/batsy/config.toml (every key optional). Codex and Claude
+authentication are managed by their respective CLIs; no API keys are stored here.
 """
 import os
 import tomllib
@@ -30,10 +30,12 @@ DEFAULTS = {
         "tool_result_chars": 1500,
         "max_steps": 5,
         "auto_codex": True,       # send complex requests to Codex automatically
+        "auto_claude": False,     # optional automatic Claude routing; Codex wins if both are enabled
     },
     "codex": {
         "model": "",
     },
+    "claude": {"model": ""},  # Claude Code CLI uses its own model and login settings.
     "memory": {
         "recent_exchanges": 6,     # last N back-and-forths sent with each request
         "recent_minutes": 180,     # ...if they happened within this window
@@ -63,7 +65,7 @@ DEFAULTS = {
         "brain": "auto",
         "history_in_context": 8,
     },
-    # Who you are: both brains (local and Codex) use this to pitch answers and expect your vocabulary.
+    # Who you are: local, Codex and Claude all use this to pitch answers and expect your vocabulary.
     "user": {
         "name": "",               # what Batsy calls you; empty = your login name
         "about": "a college student who codes every day (Python, web, Arduino and ESP32) and does 3D design, "
@@ -94,6 +96,12 @@ DEFAULTS = {
     },
     # Batsy's own budget for Codex (your Pro plan). Change by voice: "set my weekly Codex limit to 5 million"
     "codex_budget": {
+        "session_hours": 5,
+        "session_tokens": 1_500_000,
+        "weekly_tokens": 10_000_000,
+        "warn_at": 0.8,
+    },
+    "claude_budget": {
         "session_hours": 5,
         "session_tokens": 1_500_000,
         "weekly_tokens": 10_000_000,
