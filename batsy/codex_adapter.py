@@ -162,8 +162,8 @@ def run(prompt: str, label: str, args: list[str] | None = None, cwd=WORKSPACE, t
     cwd.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, PATH=f"{Path(os.sys.executable).parent}:{Path.home() / '.local/bin'}:"
                                 f"{os.environ.get('PATH', '')}")
-    command = [exe, "exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "workspace-write",
-               "--ask-for-approval", "on-request", "--color", "never", "--output-last-message"]
+    command = [exe, "exec", "--ephemeral", "--skip-git-repo-check", "--approve-for-me",
+               "--color", "never", "--output-last-message"]
     with tempfile.NamedTemporaryFile(prefix="batsy-codex-", suffix=".txt", delete=False) as output_file:
         output_path = Path(output_file.name)
     command.append(str(output_path))

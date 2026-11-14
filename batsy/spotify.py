@@ -401,7 +401,31 @@ class Spotify:
             data = json.loads(CATALOG_FILE.read_text())
         except (OSError, ValueError):
             return []
-        from rapidfuzz import fuzz, process
+        try:
+            from rapidfuzz import fuzz, process
+        except ImportError:
+            # Keep music matching available in offline installs; RapidFuzz is
+            # declared in pyproject.toml and used when it is installed.
+            from difflib import SequenceMatcher
+
+            class _Fuzz:
+                @staticmethod
+                def ratio(a, b):
+                    return SequenceMatcher(None, a, b).ratio() * 100
+
+                @staticmethod
+                def token_sort_ratio(a, b):
+                    return SequenceMatcher(None, " ".join(sorted(a.split())),
+                                           " ".join(sorted(b.split()))).ratio() * 100
+
+            class _Process:
+                @staticmethod
+                def extract(query, choices, scorer, limit=5):
+                    scored = ((choice, scorer(query, choice), i)
+                              for i, choice in enumerate(choices))
+                    return sorted(scored, key=lambda item: item[1], reverse=True)[:limit]
+
+            fuzz, process = _Fuzz(), _Process()
 
         from batsy.voice.topics import sound_key
 
