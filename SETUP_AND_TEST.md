@@ -137,6 +137,7 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 - [ ] Trigger a risky command â†’ Allow/Deny dialog appears; Allow/Deny handles the request. Press Stop during a local and a Claude Code response â†’ output ceases.
 - [ ] Try an unauthenticated request, a wrong Host, and a cross-origin POST â†’ each is rejected. Confirm the token is in `~/.config/batsy/chat_token` and remote access is off.
 - [ ] Toggle Listen and Read aloud independently; restart Batsy â†’ the selected switches are restored.
+- [ ] In chat mode, press the microphone button, speak a sentence, pause â†’ the transcript appears in the composer; send it and confirm the reply.
 
 ### H. Pictures and pull-ups
 - [ ] "Show me a picture of the Eiffel Tower at night" → a night photo appears full screen.

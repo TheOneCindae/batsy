@@ -51,6 +51,7 @@ When Batsy is running, its authenticated chat page is served on `127.0.0.1:8765`
 
 - Replies stream into a local browser page with Markdown and fenced code, copy buttons, and basic syntax colours. The page includes conversation history, search, rename/archive, stop, and a brain picker (`Auto`, `Local`, `Claude`).
 - Drop a PDF or image onto the page to index it through Batsy's document pipeline. Risky tool actions wait for an Allow/Deny dialog; chat turns can be stopped while they run.
+- The composer mic button records one utterance through Batsy's existing microphone and transcription stack, then puts the transcript in the input box.
 - `Listen` and `Read aloud` are independent switches. Assistant replies have Copy, Read aloud, and Regenerate actions; user messages can be edited into the composer. Export downloads the current thread as Markdown.
 - The server binds to loopback only and requires a random token stored in `~/.config/batsy/chat_token`; the first browser launch receives that token in a one-time URL and stores it in a strict, HttpOnly cookie. Remote access is not enabled.
 - Settings are under `[chat]` in `~/.config/batsy/config.toml`; set `enabled = false` to disable the web server.
