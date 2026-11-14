@@ -306,15 +306,20 @@ class ChatServer:
                             threading.Thread(target=say_once, daemon=True, name="chat-read-aloud").start()
                         self._json({"ok": True})
                     elif self.path == "/api/ptt":
-                        if not owner.app.chat_mode or owner.app.ears is None or owner.app.stt is None:
-                            return self._json({"error": "Push-to-talk is available in chat mode while the voice service is running"}, 409)
+                        if owner.app.ears is None or owner.app.stt is None:
+                            return self._json({"error": "Push-to-talk needs the voice service to be running"}, 409)
+                        if owner.app.turn_lock.locked():
+                            return self._json({"error": "Batsy is busy; try push-to-talk when the current turn finishes"}, 409)
                         if not owner.ptt_lock.acquire(blocking=False):
                             return self._json({"error": "Microphone is already recording"}, 409)
                         def dictate():
                             try:
                                 owner.app.ptt_active = True
+                                owner.app.mode_changed.set()
+                                time.sleep(0.6)
                                 ears = owner.app.ears
-                                ears.reopen()
+                                if not ears.reopen():
+                                    raise RuntimeError("Could not open the microphone")
                                 ears.drain()
                                 audio = ears.record_utterance(start_timeout=5, max_seconds=12)
                                 if audio is None:
@@ -328,8 +333,12 @@ class ChatServer:
                                 try:
                                     owner.app.ears.close()
                                     owner.app.ears.stream = None
+                                    if not owner.app.chat_mode:
+                                        owner.app.ears.reopen()
+                                        owner.app.ears.drain()
                                 finally:
                                     owner.app.ptt_active = False
+                                    owner.app.mode_changed.set()
                                     owner.ptt_lock.release()
                         threading.Thread(target=dictate, daemon=True, name="chat-dictation").start()
                         self._json({"ok": True})

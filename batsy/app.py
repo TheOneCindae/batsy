@@ -520,6 +520,10 @@ class Batsy:
         live_id = (turn_id or f"voice-{time.time_ns()}") if source in ("voice", "chat") else None
         known = self.learner.recall(n) if source != "chat" else None  # cached replies use voice style
         if known:
+            cid = self.chat_server.conversations.active_id if self.chat_server else None
+            if live_id and self.chat_server:
+                self.chat_server.bus.publish("turn_start", id=live_id, conversation=cid, source=source,
+                                             **({"transcript": text} if source == "voice" else {}))
             for sentence in re.split(r"(?<=[.!?])\s+", known):
                 say(sentence)
             self.learner.record(text, n, "cache", time.time() - t0, known)
@@ -528,7 +532,6 @@ class Batsy:
                 memory = self.brain.memory
                 with memory.lock, memory.db:
                     row = memory.db.execute("SELECT id FROM exchanges ORDER BY id DESC LIMIT 1").fetchone()
-                    cid = self.chat_server.conversations.active_id
                     if row:
                         memory.db.execute("UPDATE exchanges SET conversation_id=?,reply_raw=?,style='voice',brain='cache' WHERE id=?",
                                           (cid, known, row["id"]))
@@ -538,6 +541,8 @@ class Batsy:
             return known
         with self.turn_lock:
             if abort.is_set():
+                if live_id and self.chat_server:
+                    self.chat_server.bus.publish("turn_done", id=live_id, conversation=conversation_id, reply="", stopped=True)
                 return ""
             brain = self.brain
             if source == "chat" and brain_preference in ("local", "claude") and self.cfg.get("brain.engine") == "claude":
@@ -851,6 +856,10 @@ class Batsy:
         errors: list[float] = []
         while True:
             try:
+                if self.ptt_active:
+                    self.mode_changed.wait(0.25)
+                    self.mode_changed.clear()
+                    continue
                 if self.chat_mode:
                     if self.ears.stream and not self.ptt_active:
                         self.ears.close()
