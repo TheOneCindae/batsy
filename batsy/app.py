@@ -502,7 +502,8 @@ class Batsy:
         self.confirm_request = None
 
     def run_turn(self, text: str, source: str, say, abort: threading.Event, confirm,
-                 conversation_id: int | None = None) -> str:
+                 conversation_id: int | None = None, turn_id: str | None = None,
+                 delta_callback=None, brain_preference=None, chat_style=None) -> str:
         """Run one request through the brain, then honour any restart/reset the tools asked for."""
         spoke = []
 
@@ -515,8 +516,8 @@ class Batsy:
 
         n, t0 = _norm(text), time.time()
         self.last_turn = t0
-        live_id = f"voice-{time.time_ns()}" if source == "voice" else None
-        if live_id and self.chat_server:
+        live_id = (turn_id or f"voice-{time.time_ns()}") if source in ("voice", "chat") else None
+        if live_id and self.chat_server and not abort.is_set():
             self.chat_server.bus.publish("turn_start", id=live_id, conversation=self.chat_server.conversations.active_id,
                                          source="voice", transcript=text)
         known = self.learner.recall(n) if source != "chat" else None  # cached replies use voice style
@@ -534,13 +535,21 @@ class Batsy:
             self.confirm_handler = confirm
             raw_parts = []
             old_delta = getattr(self.brain, "on_delta", None)
+            old_preference = getattr(self.brain, "brain_preference", "auto")
+            old_style = getattr(self.brain, "chat_style", False)
             def delta(part):
                 raw_parts.append(part)
                 if live_id and self.chat_server:
                     self.chat_server.bus.publish("text_delta", id=live_id, text=part)
                 if old_delta:
                     old_delta(part)
+                if delta_callback:
+                    delta_callback(part)
             self.brain.on_delta = delta
+            if brain_preference is not None:
+                self.brain.brain_preference = brain_preference
+            if chat_style is not None:
+                self.brain.chat_style = chat_style
             self._turn_markers = []
             self.brain.route, self.brain.last_actions = "full", []
             try:
@@ -548,6 +557,8 @@ class Batsy:
             finally:
                 self.confirm_handler = self._confirm_console
                 self.brain.on_delta = old_delta
+                self.brain.brain_preference = old_preference
+                self.brain.chat_style = old_style
                 memory.turn_state.conversation_id = previous_cid
             route = getattr(self.brain, "route", "full")
             secs = time.time() - t0

@@ -162,14 +162,9 @@ class ChatServer:
                         cid = int(data.get("conversation") or owner.conversations.active_id)
                         owner.conversations.activate(cid)
                         tid, abort = owner.conversations.begin_turn()
-                        owner.bus.publish("turn_start", id=tid, conversation=cid, source="chat")
-
                         def work():
                             raw = []
-                            owner.app.brain.on_delta = lambda s: (raw.append(s), owner.bus.publish("text_delta", id=tid, text=s))
-                            old_preference = getattr(owner.app.brain, "brain_preference", "auto")
-                            owner.app.brain.brain_preference = data.get("brain", "auto")
-                            owner.app.brain.chat_style = True
+                            delta = lambda s: (raw.append(s), owner.bus.publish("text_delta", id=tid, text=s))
                             def confirm(question):
                                 aid = secrets.token_hex(12)
                                 done = threading.Event()
@@ -181,7 +176,8 @@ class ChatServer:
                             try:
                                 if not owner.app.local_command(text):
                                     owner.app.run_turn(text, "chat", lambda s: owner.bus.publish("sentence", id=tid, text=s), abort, confirm,
-                                                       conversation_id=cid)
+                                                       conversation_id=cid, turn_id=tid, delta_callback=delta,
+                                                       brain_preference=data.get("brain", "auto"), chat_style=True)
                                 memory = owner.app.brain.memory
                                 with memory.lock, memory.db:
                                     row = memory.db.execute("SELECT id FROM exchanges WHERE user=? AND conversation_id IS NULL ORDER BY id DESC LIMIT 1", (text,)).fetchone()
@@ -197,9 +193,6 @@ class ChatServer:
                                 log.exception("chat turn failed")
                                 owner.bus.publish("turn_error", id=tid, error=str(exc))
                             finally:
-                                owner.app.brain.on_delta = None
-                                owner.app.brain.brain_preference = old_preference
-                                owner.app.brain.chat_style = False
                                 owner.conversations.finish_turn(tid)
                         threading.Thread(target=work, daemon=True, name=f"chat-{tid}").start()
                         self._json({"id": tid, "conversation": cid}, 202)
