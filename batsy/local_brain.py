@@ -333,9 +333,16 @@ class LocalBrain:
                                        if self.chat_style else "")
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
         spoken, actions = [], []
-        if self.chat_style and self.brain_preference == "claude" and self._claude_installed:
+        if self.chat_style and self.brain_preference == "claude":
+            if not self._claude_installed:
+                message = "Claude Code isn't installed, so I can't use the Claude brain."
+                say(message)
+                spoken.append(message)
+                return self._finish(source, text, spoken, actions, abort)
             self.route = "claude"
-            self._claude(text, context, lambda s: (spoken.append(s), say(s)), None, on_tool, actions, force=True)
+            self._claude(text, context, lambda s: (spoken.append(s), say(s)),
+                         lambda kind, arg: self.visual(kind, arg) if self.visual and not abort.is_set() else None,
+                         on_tool, actions, force=True)
             return self._finish(source, text, spoken, actions, abort)
 
         def emit(sentence: str) -> None:
@@ -551,7 +558,7 @@ class LocalBrain:
         actions.append(f"worked on file {path}")
         self.status("Reading the document with Claude")
         answer = speak_stream(lambda on_text: ask_claude_docs(text, path, docs.info(path), note, context,
-                                                              on_text=on_text), emit, on_marker)
+                                                              on_text=on_text), emit, on_marker, self.on_delta)
         self.memory.set_document_summary(str(path), answer[:600])
 
     def _claude_3d(self, text, context, emit, on_marker, on_tool, actions) -> None:
@@ -560,7 +567,7 @@ class LocalBrain:
         if on_tool:
             on_tool("3d")
         self.status("Working on the 3D model with Claude")
-        speak_stream(lambda on_text: ask_claude_3d(text, context, on_text=on_text), emit, on_marker)
+        speak_stream(lambda on_text: ask_claude_3d(text, context, on_text=on_text), emit, on_marker, self.on_delta)
         actions.append("3D work by Claude")
 
     def _look(self, source, question, context, emit, on_marker, on_tool, actions) -> None:

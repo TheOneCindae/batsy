@@ -120,11 +120,12 @@ class Batsy:
         self._turn_markers: list[tuple[str, str]] = []
         self.chat_mode = False
         self.mode_changed = threading.Event()
+        self.ptt_active = False
         from batsy.chat_server import ChatServer
         self.chat_server = ChatServer(self) if cfg.get("chat.enabled") else None
         if self.chat_server:
             self.chat_server.start()
-            self.chat_mode = self.chat_server.modes.state.get("style") == "chat"
+            self.chat_mode = not self.chat_server.modes.state.get("listen", True)
         self.saver_on = False
         self.saver_preview_until = 0.0
         self._saver_dirty = False
@@ -517,26 +518,48 @@ class Batsy:
         n, t0 = _norm(text), time.time()
         self.last_turn = t0
         live_id = (turn_id or f"voice-{time.time_ns()}") if source in ("voice", "chat") else None
-        if live_id and self.chat_server and not abort.is_set():
-            self.chat_server.bus.publish("turn_start", id=live_id, conversation=self.chat_server.conversations.active_id,
-                                         source="voice", transcript=text)
         known = self.learner.recall(n) if source != "chat" else None  # cached replies use voice style
         if known:
             for sentence in re.split(r"(?<=[.!?])\s+", known):
                 say(sentence)
             self.learner.record(text, n, "cache", time.time() - t0, known)
             self.brain.memory.add_exchange(source, text, known, ["answered from memory"])
+            if self.chat_server:
+                memory = self.brain.memory
+                with memory.lock, memory.db:
+                    row = memory.db.execute("SELECT id FROM exchanges ORDER BY id DESC LIMIT 1").fetchone()
+                    cid = self.chat_server.conversations.active_id
+                    if row:
+                        memory.db.execute("UPDATE exchanges SET conversation_id=?,reply_raw=?,style='voice',brain='cache' WHERE id=?",
+                                          (cid, known, row["id"]))
+                if live_id:
+                    self.chat_server.bus.publish("text_delta", id=live_id, text=known)
+                    self.chat_server.bus.publish("turn_done", id=live_id, conversation=cid, reply=known, brain="cache")
             return known
         with self.turn_lock:
-            memory = self.brain.memory
+            if abort.is_set():
+                return ""
+            brain = self.brain
+            if source == "chat" and brain_preference in ("local", "claude") and self.cfg.get("brain.engine") == "claude":
+                if not hasattr(self, "_chat_local_brain"):
+                    from batsy.local_brain import LocalBrain
+                    self._chat_local_brain = LocalBrain(self.cfg, self.registry)
+                    self._chat_local_brain.skills = self.skills
+                    self._chat_local_brain.visual = self.show_visual
+                brain = self._chat_local_brain
+            memory = brain.memory
             previous_cid = getattr(memory.turn_state, "conversation_id", None)
             conversation_id = conversation_id or (self.chat_server.conversations.active_id if self.chat_server else None)
             memory.turn_state.conversation_id = conversation_id
+            if live_id and self.chat_server and not abort.is_set():
+                self.chat_server.bus.publish("turn_start", id=live_id, conversation=conversation_id,
+                                             source=source, **({"transcript": text} if source == "voice" else {}))
             self.confirm_handler = confirm
             raw_parts = []
-            old_delta = getattr(self.brain, "on_delta", None)
-            old_preference = getattr(self.brain, "brain_preference", "auto")
-            old_style = getattr(self.brain, "chat_style", False)
+            old_delta = getattr(brain, "on_delta", None)
+            old_preference = getattr(brain, "brain_preference", "auto")
+            old_style = getattr(brain, "chat_style", False)
+            old_visual = getattr(brain, "visual", None)
             def delta(part):
                 raw_parts.append(part)
                 if live_id and self.chat_server:
@@ -545,32 +568,35 @@ class Batsy:
                     old_delta(part)
                 if delta_callback:
                     delta_callback(part)
-            self.brain.on_delta = delta
+            brain.on_delta = delta
             if brain_preference is not None:
-                self.brain.brain_preference = brain_preference
+                brain.brain_preference = brain_preference
             if chat_style is not None:
-                self.brain.chat_style = chat_style
+                brain.chat_style = chat_style
+            if source == "chat" and self.chat_server:
+                brain.visual = lambda kind, arg: self.chat_server.bus.publish("marker", marker_kind=kind, argument=arg)
             self._turn_markers = []
-            self.brain.route, self.brain.last_actions = "full", []
+            brain.route, brain.last_actions = "full", []
             try:
-                reply = self.brain.ask(text, source, say, abort, on_tool)
+                reply = brain.ask(text, source, say, abort, on_tool)
             finally:
                 self.confirm_handler = self._confirm_console
-                self.brain.on_delta = old_delta
-                self.brain.brain_preference = old_preference
-                self.brain.chat_style = old_style
+                brain.on_delta = old_delta
+                brain.brain_preference = old_preference
+                brain.chat_style = old_style
+                brain.visual = old_visual
                 memory.turn_state.conversation_id = previous_cid
-            route = getattr(self.brain, "route", "full")
+            route = getattr(brain, "route", "full")
+            self.last_brain_used = route
             secs = time.time() - t0
             self.learner.record(text, n, route, secs, reply)
             if route in ("quick", "full", "claude") and secs > 6 and not abort.is_set():
                 self.automator.learn_soon(text, n)  # slow once is enough: have Claude make it instant
-            plain = not [a for a in getattr(self.brain, "last_actions", []) if a != "answered by Claude"]
+            plain = not [a for a in getattr(brain, "last_actions", []) if a != "answered by Claude"]
             if route in ("quick", "claude") and plain and not abort.is_set():
                 self.learner.remember(text, n, reply)
             self._learn_phrase(text)
             if self.chat_server:
-                memory = self.brain.memory
                 with memory.lock, memory.db:
                     row = memory.db.execute("SELECT id FROM exchanges WHERE user=? ORDER BY id DESC LIMIT 1", (text,)).fetchone()
                     if row:
@@ -580,10 +606,10 @@ class Batsy:
             if live_id and self.chat_server:
                 self.chat_server.bus.publish("turn_done", id=live_id, conversation=self.chat_server.conversations.active_id,
                                              reply="".join(raw_parts), brain=route)
-            learned = getattr(self.brain, "last_skill_run", None)
+            learned = getattr(brain, "last_skill_run", None)
             if learned:
                 self.last_skill = {"name": learned, "request": text, "t": time.time()}
-                self.brain.last_skill_run = None
+                brain.last_skill_run = None
         self._apply_flags()
         return reply
 
@@ -809,7 +835,10 @@ class Batsy:
         ControlServer(self).start()
         self.ears.start()
         if self.chat_server:
-            self.chat_server.open()
+            self.chat_mode = not self.chat_server.modes.state.get("listen", True)
+            self.speaker.set_enabled(self.chat_server.modes.state.get("speak", True))
+            if not self.chat_server.modes.state.get("overlay", True) and self.overlay.enabled:
+                self.overlay.hide()
             if self.chat_mode:
                 self.switch_mode("chat")
         self.speaker.say(lifecycle.started())  # "Batsy online." or "I'm back. Updated: 23 files changed."
@@ -823,7 +852,7 @@ class Batsy:
         while True:
             try:
                 if self.chat_mode:
-                    if self.ears.stream:
+                    if self.ears.stream and not self.ptt_active:
                         self.ears.close()
                         self.ears.stream = None
                     self.mode_changed.wait(1)
@@ -914,18 +943,20 @@ class Batsy:
                 time.sleep(0.2)
 
     def switch_mode(self, mode: str) -> None:
+        if self.ptt_active:
+            raise ValueError("Wait for push-to-talk to finish before switching modes")
         self.chat_mode = mode == "chat"
         if self.chat_server:
             self.chat_server.modes.set_mode(mode)
         if self.chat_mode:
             self.speaker.stop()
-            self.speaker.enabled = False
+            self.speaker.set_enabled(False)
             if self.overlay.enabled:
                 self.overlay.hide()
             if self.chat_server:
                 self.chat_server.open()
         else:
-            self.speaker.enabled = True
+            self.speaker.set_enabled(True)
             if self.overlay.enabled:
                 self.overlay.listen()
         self.mode_changed.set()

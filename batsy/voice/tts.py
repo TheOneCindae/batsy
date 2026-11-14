@@ -80,6 +80,19 @@ class Speaker:
             self.engine = "say"
         log.info("TTS engine: %s", self.engine)
 
+    def set_enabled(self, enabled: bool) -> None:
+        """Toggle speech at runtime; lazily create the workers when chat mode was started without TTS."""
+        if enabled and not hasattr(self, "pq"):
+            self._init_engine()
+            if not self.chime_path.exists():
+                _write_chime(self.chime_path)
+            self.pq = queue.Queue()
+            threading.Thread(target=self._worker, daemon=True, name="tts").start()
+            threading.Thread(target=self._player_loop, daemon=True, name="tts-play").start()
+        self.enabled = enabled
+        if not enabled:
+            self.stop()
+
     # --- public API -------------------------------------------------------
     def say(self, text: str) -> None:
         log.info("say: %s", text)

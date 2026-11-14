@@ -129,6 +129,15 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 - [ ] `batsy vault status` → counts, the installed skills, and any notes with no links.
 - [ ] Optional, for Claude Code to rename/move notes: Obsidian → Settings → General → turn on **Command line interface**, keep Obsidian open, then say "Batsy, ask Claude to rename the ESP32 note to ESP32 DevKit". Links in other notes should update.
 
+#### Browser chat
+- [ ] Start Batsy, run `batsy mode chat` â†’ authenticated local chat opens at `127.0.0.1:8765`; `batsy mode voice` returns to wake-word listening.
+- [ ] Ask for a code example â†’ Markdown and fenced code stream; Copy copies code. Reload â†’ the raw answer remains in the selected conversation.
+- [ ] New chat, search, rename, archive, export, and regenerate controls each operate on the expected conversation.
+- [ ] Drop a PDF or image onto the chat page, then ask a question about it â†’ Batsy uses the indexed document context.
+- [ ] Trigger a risky command â†’ Allow/Deny dialog appears; Allow/Deny handles the request. Press Stop during a local and a Claude Code response â†’ output ceases.
+- [ ] Try an unauthenticated request, a wrong Host, and a cross-origin POST â†’ each is rejected. Confirm the token is in `~/.config/batsy/chat_token` and remote access is off.
+- [ ] Toggle Listen and Read aloud independently; restart Batsy â†’ the selected switches are restored.
+
 ### H. Pictures and pull-ups
 - [ ] "Show me a picture of the Eiffel Tower at night" → a night photo appears full screen.
 - [ ] "Pull up connections for Nikola Tesla" → photo plus a facts card ("Serbian-American engineer…"), and the first line spoken.

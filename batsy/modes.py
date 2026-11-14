@@ -10,6 +10,8 @@ class ModeManager:
         self.cfg, self.bus = cfg, bus
         self.lock = threading.RLock()
         self.state = dict(self.DEFAULT)
+        if cfg.get("chat.default_mode") == "chat":
+            self.state.update({"listen": False, "speak": False, "overlay": False, "style": "chat"})
         self._load()
 
     def _load(self):

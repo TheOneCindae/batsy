@@ -8,6 +8,7 @@ import time
 import webbrowser
 import base64
 import re
+import binascii
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -43,9 +44,13 @@ class ChatServer:
         self.token = _token()
         cfg = app.cfg.get("chat")
         self.host, self.port = cfg["host"], cfg["port"]
+        self.brain_preference = cfg["brain"]
+        if self.host not in ("127.0.0.1", "localhost"):
+            raise ValueError("Chat server currently supports localhost only")
         self.server = None
         self.opened = False
         self.pending = {}
+        self.ptt_lock = threading.Lock()
 
     def start(self):
         owner = self
@@ -84,7 +89,7 @@ class ChatServer:
                 self.wfile.write(data)
 
             def _body(self):
-                n = min(int(self.headers.get("Content-Length", "0")), 1_000_000)
+                n = int(self.headers.get("Content-Length", "0"))
                 return json.loads(self.rfile.read(n) or b"{}")
 
             def do_GET(self):
@@ -124,6 +129,11 @@ class ChatServer:
                 elif u.path == "/api/messages":
                     cid = parse_qs(u.query).get("id", [None])[0]
                     self._json({"items": owner.conversations.messages(int(cid) if cid else None)})
+                elif u.path == "/api/usage":
+                    from batsy.usage import stats
+                    self._json(stats())
+                elif u.path == "/api/state":
+                    self._json({"mode": dict(owner.modes.state), "brain": owner.brain_preference})
                 elif u.path == "/api/events":
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
@@ -174,10 +184,25 @@ class ChatServer:
                                 req = owner.pending.pop(aid, None)
                                 return bool(req and req["answer"])
                             try:
-                                if not owner.app.local_command(text):
-                                    owner.app.run_turn(text, "chat", lambda s: owner.bus.publish("sentence", id=tid, text=s), abort, confirm,
+                                owner.app.last_said = ""
+                                handled = owner.app.local_command(text)
+                                if handled:
+                                    owner.bus.publish("turn_start", id=tid, conversation=cid, source="chat")
+                                    answer = owner.app.last_said or "Done."
+                                    raw.append(answer)
+                                    owner.bus.publish("text_delta", id=tid, text=answer)
+                                    memory = owner.app.brain.memory
+                                    memory.add_exchange("chat", text, answer, ["instant command"])
+                                    with memory.lock, memory.db:
+                                        row = memory.db.execute("SELECT id FROM exchanges WHERE user=? ORDER BY id DESC LIMIT 1", (text,)).fetchone()
+                                        if row:
+                                            memory.db.execute("UPDATE exchanges SET conversation_id=?,reply_raw=?,style='chat',brain='command' WHERE id=?",
+                                                              (cid, answer, row["id"]))
+                                else:
+                                    owner.app.run_turn(text, "chat", lambda s: (owner.bus.publish("sentence", id=tid, text=s),
+                                                                                owner.app.speaker.say(s) if owner.modes.state["speak"] else None), abort, confirm,
                                                        conversation_id=cid, turn_id=tid, delta_callback=delta,
-                                                       brain_preference=data.get("brain", "auto"), chat_style=True)
+                                                       brain_preference=data.get("brain", owner.brain_preference), chat_style=True)
                                 memory = owner.app.brain.memory
                                 with memory.lock, memory.db:
                                     row = memory.db.execute("SELECT id FROM exchanges WHERE user=? AND conversation_id IS NULL ORDER BY id DESC LIMIT 1", (text,)).fetchone()
@@ -188,7 +213,8 @@ class ChatServer:
                                     c = memory.db.execute("SELECT title FROM conversations WHERE id=?", (cid,)).fetchone()
                                     if c and c["title"] == "New chat":
                                         memory.db.execute("UPDATE conversations SET title=? WHERE id=?", (text[:72], cid))
-                                owner.bus.publish("turn_done", id=tid, conversation=cid, reply="".join(raw), brain=getattr(owner.app.brain, "route", "local"))
+                                if handled:
+                                    owner.bus.publish("turn_done", id=tid, conversation=cid, reply="".join(raw), brain="command")
                             except Exception as exc:
                                 log.exception("chat turn failed")
                                 owner.bus.publish("turn_error", id=tid, error=str(exc))
@@ -199,7 +225,7 @@ class ChatServer:
                     elif self.path == "/api/stop":
                         owner.conversations.stop(data.get("id"))
                         from batsy import claude_code
-                        claude_code.cancel(thread="turn")
+                        claude_code.cancel(thread=f"chat-{data.get('id')}")
                         self._json({"ok": True})
                     elif self.path == "/api/conversation/new":
                         cid = owner.conversations.create()
@@ -248,15 +274,68 @@ class ChatServer:
                         owner.modes.set_mode(data["mode"])
                         owner.app.switch_mode(data["mode"])
                         self._json({"state": owner.modes.state})
+                    elif self.path == "/api/switches":
+                        if owner.app.ptt_active and "listen" in data:
+                            return self._json({"error": "Wait for push-to-talk to finish before changing Listen"}, 409)
+                        state = owner.modes.update({k: bool(v) for k, v in data.items() if k in ("listen", "speak", "overlay")})
+                        owner.app.chat_mode = not state["listen"]
+                        owner.app.speaker.set_enabled(state["speak"])
+                        if state["overlay"] and owner.app.overlay.enabled:
+                            owner.app.overlay.listen()
+                        elif owner.app.overlay.enabled:
+                            owner.app.overlay.hide()
+                        owner.app.mode_changed.set()
+                        self._json({"state": state})
                     elif self.path == "/api/brain":
                         preference = data.get("brain", "auto")
                         if preference not in ("auto", "local", "claude"):
                             return self._json({"error": "invalid brain"}, 400)
-                        owner.app.brain.brain_preference = preference
+                        owner.brain_preference = preference
                         self._json({"brain": preference})
+                    elif self.path == "/api/speak":
+                        text = str(data.get("text", ""))[:6000]
+                        if text:
+                            def say_once():
+                                previous = owner.app.speaker.enabled
+                                owner.app.speaker.set_enabled(True)
+                                try:
+                                    owner.app.speaker.say(text)
+                                    owner.app.speaker.wait_idle(120)
+                                finally:
+                                    owner.app.speaker.set_enabled(previous)
+                            threading.Thread(target=say_once, daemon=True, name="chat-read-aloud").start()
+                        self._json({"ok": True})
+                    elif self.path == "/api/ptt":
+                        if not owner.app.chat_mode or owner.app.ears is None or owner.app.stt is None:
+                            return self._json({"error": "Push-to-talk is available in chat mode while the voice service is running"}, 409)
+                        if not owner.ptt_lock.acquire(blocking=False):
+                            return self._json({"error": "Microphone is already recording"}, 409)
+                        def dictate():
+                            try:
+                                owner.app.ptt_active = True
+                                ears = owner.app.ears
+                                ears.reopen()
+                                ears.drain()
+                                audio = ears.record_utterance(start_timeout=5, max_seconds=12)
+                                if audio is None:
+                                    owner.bus.publish("dictation", text="", error="I didn't hear speech.")
+                                else:
+                                    owner.bus.publish("dictation", text=owner.app.stt.transcribe(audio))
+                            except Exception as exc:
+                                log.exception("push-to-talk failed")
+                                owner.bus.publish("dictation", text="", error=str(exc))
+                            finally:
+                                try:
+                                    owner.app.ears.close()
+                                    owner.app.ears.stream = None
+                                finally:
+                                    owner.app.ptt_active = False
+                                    owner.ptt_lock.release()
+                        threading.Thread(target=dictate, daemon=True, name="chat-dictation").start()
+                        self._json({"ok": True})
                     else:
                         self._json({"error": "not found"}, 404)
-                except (ValueError, KeyError, json.JSONDecodeError) as exc:
+                except (ValueError, KeyError, json.JSONDecodeError, binascii.Error) as exc:
                     self._json({"error": str(exc)}, 400)
 
         self.server = ThreadingHTTPServer((self.host, self.port), Handler)

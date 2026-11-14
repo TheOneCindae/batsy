@@ -45,6 +45,16 @@ Log out and back in once so the Arduino serial-port permission (`dialout` group)
 - **Risky actions** (`rm -rf`, `dnf remove`, shutdown, disk tools, force-push, etc.) are confirmed by voice first. Root commands go through `pkexec`, which shows the normal GNOME password dialog.
 - **Typing:** `batsy chat` (or `batsy ask "..."`) talks to the running assistant through a local socket.
 
+## Browser chat and voice/chat mode
+
+When Batsy is running, its authenticated chat page is served on `127.0.0.1:8765`. Switch modes with `batsy mode chat`, `batsy mode voice`, `batsy mode toggle`, or say **"Batsy, chat mode"**. The browser chat shares the active conversation with voice turns and can be switched back from its header.
+
+- Replies stream into a local browser page with Markdown and fenced code, copy buttons, and basic syntax colours. The page includes conversation history, search, rename/archive, stop, and a brain picker (`Auto`, `Local`, `Claude`).
+- Drop a PDF or image onto the page to index it through Batsy's document pipeline. Risky tool actions wait for an Allow/Deny dialog; chat turns can be stopped while they run.
+- `Listen` and `Read aloud` are independent switches. Assistant replies have Copy, Read aloud, and Regenerate actions; user messages can be edited into the composer. Export downloads the current thread as Markdown.
+- The server binds to loopback only and requires a random token stored in `~/.config/batsy/chat_token`; the first browser launch receives that token in a one-time URL and stores it in a strict, HttpOnly cookie. Remote access is not enabled.
+- Settings are under `[chat]` in `~/.config/batsy/config.toml`; set `enabled = false` to disable the web server.
+
 ## Full-screen mode
 
 When you say "Batsy", the screen fades to a dark Batsy view, drawn by the GPU (three.js inside Qt WebEngine):
