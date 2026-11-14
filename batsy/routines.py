@@ -140,5 +140,5 @@ class Routines:
                     self.app._reply(str(e))
         if spec.get("say"):
             self.app._reply(spec["say"])
-        if spec.get("ask"):  # optional: hand a prompt to Claude (costs tokens)
+        if spec.get("ask"):  # optional: hand a prompt to Codex (costs tokens)
             self.app.speak_brief(spec["ask"])

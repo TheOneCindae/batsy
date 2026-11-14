@@ -81,21 +81,20 @@ ARDUINO="$(command -v arduino-cli || echo "$BIN/arduino-cli")"
 "$ARDUINO" core update-index || echo "  (couldn't update the board index; run: arduino-cli core update-index)"
 "$ARDUINO" core install arduino:avr || echo "  (couldn't install Arduino AVR boards; run: arduino-cli core install arduino:avr)"
 
-say "Installing the local AI brain (Ollama + qwen2.5:3b, ~2 GB download)"
+say "Installing the local AI brain (Ollama + qwen3.5:4b, ~3.3 GB download)"
 if ! command -v ollama >/dev/null; then
   sudo dnf install -y ollama || curl -fsSL https://ollama.com/install.sh | sh
 fi
 sudo systemctl enable --now ollama 2>/dev/null || (nohup ollama serve >/dev/null 2>&1 &)
 for _ in $(seq 1 30); do curl -fs http://127.0.0.1:11434/api/tags >/dev/null && break; sleep 1; done
-ollama pull qwen2.5:3b || echo "  (model download failed; run: ollama pull qwen2.5:3b)"
+ollama pull qwen3.5:4b || echo "  (model download failed; run: ollama pull qwen3.5:4b)"
 
-say "Installing Claude Code (Batsy's expert brain, runs on your Claude Pro plan)"
-if ! command -v claude >/dev/null && [ ! -x "$BIN/claude" ]; then
-  curl -fsSL https://claude.ai/install.sh | bash \
-    || { sudo dnf install -y nodejs npm && npm install -g --prefix "$HOME/.local" @anthropic-ai/claude-code; } \
-    || echo "  (Claude Code install failed; see https://docs.claude.com/en/docs/claude-code)"
+say "Installing Codex (Batsy's expert brain, runs on your Codex Pro plan)"
+if ! command -v codex >/dev/null && [ ! -x "$BIN/codex" ]; then
+  curl -fsSL https://chatgpt.com/codex/install.sh | sh \
+    || echo "  (Codex install failed; install it from https://chatgpt.com/codex)"
 fi
-echo "  Log in once with your Pro account: run  claude  in a terminal, then type /login if it asks."
+echo "  Log in once with your ChatGPT account: run  codex login in a terminal."
 touch "$CONF/env" && chmod 600 "$CONF/env"
 [ -f "$CONF/config.toml" ] || cp "$REPO/packaging/config.example.toml" "$CONF/config.toml"
 
@@ -111,7 +110,7 @@ cat <<EOF
 
 Next steps (also in ~/batsy/SETUP_AND_TEST.md):
   1. Log out and back in once (Arduino serial permission + PATH).
-  2. Run  claude  once and log in with your Claude Pro account.
+  2. Run  codex  once and log in with your Codex Pro account.
   3. Run  batsy selftest --all  and fix anything marked FAIL.
   4. Start Batsy:  batsy -v   (it also starts by itself at login). Say "Batsy" and wait for the chime.
 EOF

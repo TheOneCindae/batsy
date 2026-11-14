@@ -10,8 +10,8 @@ import subprocess
 
 from batsy import safety
 
-# What you say -> the command to run ("type in Claude" means start Claude Code).
-SPOKEN = {"claude": "claude", "claude code": "claude", "python": "python3", "python three": "python3",
+# What you say -> the command to run ("type in Codex" means start Codex).
+SPOKEN = {"codex": "codex", "codex code": "codex", "python": "python3", "python three": "python3",
           "top": "top", "h top": "htop", "htop": "htop", "batsy": "batsy chat", "git status": "git status",
           "neofetch": "neofetch", "fastfetch": "fastfetch", "update": "sudo dnf upgrade --refresh"}
 

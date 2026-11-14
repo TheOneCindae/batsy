@@ -20,7 +20,7 @@ DOMAINS: dict[str, dict[str, list[str]]] = {
         "GitLab": ["get lab", "git lab"],
         "git": [],
         "VS Code": ["v s code", "vs code", "vee s code", "visual studio code", "vscode", "bs code"],
-        "Claude Code": ["clawed code", "claud code", "cloud code"],
+        "Codex": ["clawed code", "claud code", "cloud code"],
         "Copilot": ["co pilot", "co-pilot"],
         "Cursor": [],
         "Python": [],
@@ -201,7 +201,7 @@ DOMAINS: dict[str, dict[str, list[str]]] = {
 # Parakeet is decoded with hotwords: a long list starts "hearing" them in background noise, so only these
 # genuinely unusual words are biased; everything else is handled by fix() afterwards.
 HOTWORDS: dict[str, list[str]] = {
-    "developer": ["GitHub", "VS Code", "Claude Code", "PyTorch", "NumPy", "Jupyter", "Ollama", "TypeScript",
+    "developer": ["GitHub", "VS Code", "Codex", "PyTorch", "NumPy", "Jupyter", "Ollama", "TypeScript",
                   "Node.js", "Next.js", "npm", "Django", "FastAPI", "PostgreSQL", "SQLite", "Supabase", "Vercel",
                   "Kubernetes", "kubectl", "LeetCode", "ESP32", "Arduino", "PlatformIO", "GPIO", "regex"],
     "3d": ["Blender", "Fusion 360", "SolidWorks", "AutoCAD", "Onshape", "Tinkercad", "FreeCAD", "OpenSCAD",

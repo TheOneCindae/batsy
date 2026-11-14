@@ -1,4 +1,4 @@
-"""Agenda and presets for Claude: the same local store the good-morning / good-night routines use."""
+"""Agenda and presets for Codex: the same local store the good-morning / good-night routines use."""
 import datetime as dt
 import re
 

@@ -24,7 +24,7 @@ FOLDERS = {
 }
 SITES = {
     "youtube": "https://youtube.com", "github": "https://github.com", "gmail": "https://mail.google.com",
-    "google": "https://google.com", "chatgpt": "https://chatgpt.com", "claude": "https://claude.ai",
+    "google": "https://google.com", "chatgpt": "https://chatgpt.com", "codex": "https://codex.ai",
     "whatsapp": "https://web.whatsapp.com", "whatsapp web": "https://web.whatsapp.com",
     "instagram": "https://instagram.com", "netflix": "https://netflix.com", "linkedin": "https://linkedin.com",
     "maps": "https://maps.google.com", "google maps": "https://maps.google.com", "drive": "https://drive.google.com",

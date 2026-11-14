@@ -1,4 +1,4 @@
-"""Tool registry: every capability Claude can call.
+"""Tool registry: every capability Codex can call.
 
 Each tool module exposes `register(registry)` and adds tools with `registry.tool(...)`.
 """

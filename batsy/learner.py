@@ -2,11 +2,11 @@
 answers for general questions, and turning things you ask again and again into instant code.
 
 - RequestLog: requests.db. Route is "instant", "command", "skill", "cache", "quick" (small local model, no tools),
-  "full" (local model with tools), "claude", "look", "3d", "doc" or "learn".
+  "full" (local model with tools), "codex", "look", "3d", "doc" or "learn".
 - Answers: a question a model answered ("what's the capital of Japan") is answered from memory next time, in
   milliseconds. Never for time-sensitive, personal or action requests. "That's wrong" forgets it.
 - Automator: every few hours (or "learn from what I ask"), requests that keep going to a model are handed to
-  Claude to write a skill for, so next time they run as plain code. Claude says when something can't be
+  Codex to write a skill for, so next time they run as plain code. Codex says when something can't be
   automated (it needs thinking every time); that's remembered so it isn't asked again.
 """
 import difflib
@@ -20,7 +20,7 @@ from batsy.config import DATA_DIR
 
 log = logging.getLogger("batsy.learner")
 DB = DATA_DIR / "requests.db"
-MODEL_ROUTES = ("quick", "full", "claude")
+MODEL_ROUTES = ("quick", "full", "codex")
 
 # Answers to these change, or are about you: never remember them.
 VOLATILE = re.compile(
@@ -118,7 +118,7 @@ class Learner:
 
 
 class Automator:
-    """Background: every few hours, while Batsy is idle, hand the most repeated model-bound requests to Claude
+    """Background: every few hours, while Batsy is idle, hand the most repeated model-bound requests to Codex
     to turn into skills (plain code). Also run on demand: "learn from what I ask"."""
 
     def __init__(self, app, learner: Learner, every_hours: float = 6):
@@ -139,8 +139,8 @@ class Automator:
             time.sleep(self.every)
 
     def learn_soon(self, text: str, norm: str) -> None:
-        """A request just needed a model and was slow: have Claude make it instant now, in the background,
-        instead of waiting for it to repeat. One at a time, at most 6 an hour, within the Claude budget."""
+        """A request just needed a model and was slow: have Codex make it instant now, in the background,
+        instead of waiting for it to repeat. One at a time, at most 6 an hour, within the Codex budget."""
         now = time.time()
         self.recent = [t for t in getattr(self, "recent", []) if now - t < 3600]
         if len(self.recent) >= 6 or self.learner.cacheable(norm):
@@ -157,10 +157,10 @@ class Automator:
         if skills is None or not self.running.acquire(blocking=False):
             return
         try:
-            from batsy import claude_code
+            from batsy import codex_adapter
 
             skills.reload()
-            if skills.match(norm) or claude_code.over_budget(self.app.cfg):
+            if skills.match(norm) or codex_adapter.over_budget(self.app.cfg):
                 return
             log.info("making %r instant", norm)
             out = skills.learn(text, lambda _q: False, execute=False)
@@ -183,10 +183,10 @@ class Automator:
             return []
         learned = []
         try:
-            from batsy import claude_code
+            from batsy import codex_adapter
 
             for text, norm, n in self.learner.candidates():
-                if claude_code.over_budget(self.app.cfg):
+                if codex_adapter.over_budget(self.app.cfg):
                     break
                 log.info("automating %r (asked %d times)", norm, n)
                 out = skills.learn(text, lambda _q: False, execute=False)  # write the code; first real use tests it

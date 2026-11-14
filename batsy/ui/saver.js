@@ -56,7 +56,7 @@ function widget(w, d) {
   }
   if (title) box.appendChild(el('h3', null, title));
   if (d.error) { box.appendChild(el('p', 'err', d.error)); return box; }
-  if (kind === 'claude_budget') {
+  if (kind === 'codex_budget') {
     const m = el('div', 'meters');
     m.append(meter('This session', d.session || {}, true), meter('This week', d.week || {}, false));
     box.appendChild(m);

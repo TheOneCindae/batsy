@@ -1,7 +1,7 @@
 """Batsy's 3D viewer: exact geometry in trimesh, drawn by three.js (batsy/ui/viewer.js), driven over a local socket.
 
 Normally it lives inside Batsy's overlay (one process, no extra window). Run on its own with
-`python -m batsy.viewer3d [model]` it opens a normal window. Batsy's voice parser and Claude Code both send
+`python -m batsy.viewer3d [model]` it opens a normal window. Batsy's voice parser and Codex both send
 JSON commands like {"cmd": "rotate", "axis": "z", "deg": 90} and get JSON replies (dimensions, volume...).
 All the maths happens on the socket threads, so a big model never freezes the screen; the page only gets
 geometry once per model plus small state updates. Click-to-measure events go out as JSON lines on stdout.

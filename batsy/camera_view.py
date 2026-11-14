@@ -1,7 +1,7 @@
 """Live camera window. Runs as its own process (`python -m batsy.camera_view`).
 
 It only displays the feed and keeps the latest frame on disk (small JPEG, a few times a second).
-Nothing is sent to Claude from here: when the user asks a question, the `look` tool reads that
+Nothing is sent to Codex from here: when the user asks a question, the `look` tool reads that
 one frame. This avoids reopening the device, which V4L2 usually won't allow while it's in use.
 """
 import argparse

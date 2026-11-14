@@ -1,9 +1,9 @@
 """`batsy selftest`: check every part of Batsy on this laptop and say how to fix what's broken.
 
-  batsy selftest            quick checks (seconds, no Claude usage)
+  batsy selftest            quick checks (seconds, no Codex usage)
   batsy selftest --gui      also open the overlay, camera window and 3D viewer briefly
   batsy selftest --voice    also record from the mic and speak a line
-  batsy selftest --claude   also send one tiny request to Claude Code (uses a few Pro tokens)
+  batsy selftest --codex   also send one tiny request to Codex (uses a few Pro tokens)
   batsy selftest --arduino  also compile a blink sketch (about 30 s)
   batsy selftest --all      everything
 """
@@ -66,13 +66,13 @@ def t_config(cfg):
     return f"brain = {cfg.get('brain.engine')}, model = {cfg.get('local.model')}"
 
 
-@check("No Claude API in local mode")
+@check("No Codex API in local mode")
 def t_no_api(cfg):
     from batsy import app  # noqa: F401
-    if cfg.get("brain.engine") == "claude":
-        raise Skip("engine = claude (API) chosen in config")
-    need("anthropic" not in sys.modules, "the Claude API library was loaded; check batsy/app.py imports")
-    return "all Claude work goes through Claude Code (Pro plan)"
+    if cfg.get("brain.engine") == "codex":
+        raise Skip("engine = codex (API) chosen in config")
+    need("openai" not in sys.modules, "the Codex API library was loaded; check batsy/app.py imports")
+    return "all Codex work goes through Codex (Pro plan)"
 
 
 @check("Desktop tools")
@@ -115,34 +115,34 @@ def t_ollama(cfg):
     return f"replied {out['message']['content'].strip()[:20]!r} in {time.time() - t:.1f}s"
 
 
-@check("Claude Code installed")
-def t_claude_installed(cfg):
-    exe = shutil.which("claude") or (str(Path.home() / ".local/bin/claude") if (Path.home() / ".local/bin/claude").exists() else None)
-    need(exe, "install: curl -fsSL https://claude.ai/install.sh | bash   then run: claude  (log in with Pro)")
+@check("Codex installed")
+def t_codex_installed(cfg):
+    exe = shutil.which("codex") or (str(Path.home() / ".local/bin/codex") if (Path.home() / ".local/bin/codex").exists() else None)
+    need(exe, "install from https://chatgpt.com/codex/install.sh, then run: codex login")
     v = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30).stdout.strip()
     return v
 
 
-@check("Claude Code answers (Pro)")
-def t_claude_live(cfg, enabled):
+@check("Codex answers (Pro)")
+def t_codex_live(cfg, enabled):
     if not enabled:
-        raise Skip("run with --claude (uses a few Pro tokens)")
-    from batsy import claude_code
+        raise Skip("run with --codex (uses a few Pro tokens)")
+    from batsy import codex_adapter
 
-    claude_code.CFG = cfg
-    before = len(claude_code._rows())
-    out = claude_code.run("Reply with exactly: BATSY OK", "selftest", timeout=120, force=True)
-    need("BATSY OK" in out.upper(), f"unexpected answer: {out[:120]} (logged in? run: claude)")
-    need(len(claude_code._rows()) > before, "usage wasn't recorded (Claude Code JSON output changed?)")
-    r = claude_code._rows()[-1]
+    codex_adapter.CFG = cfg
+    before = len(codex_adapter._rows())
+    out = codex_adapter.run("Reply with exactly: BATSY OK", "selftest", timeout=120, force=True)
+    need("BATSY OK" in out.upper(), f"unexpected answer: {out[:120]} (logged in? run: codex)")
+    need(len(codex_adapter._rows()) > before, "usage wasn't recorded (Codex JSON output changed?)")
+    r = codex_adapter._rows()[-1]
     return f"OK, {r['in'] + r['out'] + r['cache_read'] + r['cache_write']} tokens counted"
 
 
-@check("Claude budget")
+@check("Codex budget")
 def t_budget(cfg):
-    from batsy import claude_code
+    from batsy import codex_adapter
 
-    b = claude_code.budget(cfg)
+    b = codex_adapter.budget(cfg)
     return f"session {b['session']['used']:,}/{b['session']['limit']:,} · week {b['week']['used']:,}/{b['week']['limit']:,}"
 
 
@@ -447,12 +447,12 @@ def t_parsers(cfg):
 def main(argv: list[str]) -> None:
     flags = set(argv)
     allf = "--all" in flags
-    gui, voice, claude, arduino = (allf or f in flags for f in ("--gui", "--voice", "--claude", "--arduino"))
+    gui, voice, codex, arduino = (allf or f in flags for f in ("--gui", "--voice", "--codex", "--arduino"))
     cfg = Config.load()
     print("\nBatsy self-test\n")
     for fn, args in [
         (t_python, ()), (t_config, ()), (t_no_api, ()), (t_tools, ()), (t_autostart, ()),
-        (t_ollama, ()), (t_claude_installed, ()), (t_claude_live, (claude,)), (t_budget, ()),
+        (t_ollama, ()), (t_codex_installed, ()), (t_codex_live, (codex,)), (t_budget, ()),
         (t_mic, (voice,)), (t_vosk, ()), (t_whisper, ()), (t_tts, (voice,)),
         (t_idle, ()), (t_screenshot, ()), (t_overlay, (gui,)), (t_camera, (gui,)),
         (t_memory, ()), (t_vault, ()), (t_apps, ()), (t_skills, ()), (t_docs, ()), (t_ocr, ()), (t_images, ()),

@@ -6,7 +6,7 @@ Commands in:  {"cmd": "listen"} {"cmd": "level", "v": 0..1} {"cmd": "partial", "
               {"cmd": "card", "title", "text"} {"cmd": "done", "linger": s} {"cmd": "hide"}
               {"cmd": "saver", "stats": {...}, "next": "..."}  (screensaver; any mouse/key input ends it)
               {"cmd": "camera", "on": bool, "path"}  (live camera feed from batsy.camera_view's frame file)
-              {"cmd": "status", "text"}  (what Batsy is doing right now: "Asking Claude", "Running skill"...)
+              {"cmd": "status", "text"}  (what Batsy is doing right now: "Asking Codex", "Running skill"...)
 Events out:   {"event": "dismissed"}  (Esc / click / Space)
 """
 import json
@@ -308,7 +308,7 @@ class Overlay(QWidget):
             p.drawEllipse(QPointF(px, y * h + 18 * math.cos(t * 0.04 + ph)), r, r)
 
     def _status(self, p: QPainter, at: QPointF, center: bool = True) -> None:
-        """'ASKING CLAUDE · 12s' with a spinner: always visible, so a long wait is never a mystery."""
+        """'ASKING CODEX · 12s' with a spinner: always visible, so a long wait is never a mystery."""
         label = self.status or STATE_LABEL.get(self.state, "")
         if not label:
             return
@@ -423,7 +423,7 @@ class Overlay(QWidget):
         if d.get("error"):
             self._text(p, d["error"], QRectF(inner.left(), inner.top(), inner.width(), 40), 12, QColor(255, 140, 140), center=False)
             return
-        if kind == "claude_budget":
+        if kind == "codex_budget":
             half = (inner.width() - 20) / 2
             for i, (label, key) in enumerate((("Session", "session"), ("This week", "week"))):
                 self._mini_bar(p, QRectF(inner.left() + i * (half + 20), inner.top(), half, inner.height()), label,

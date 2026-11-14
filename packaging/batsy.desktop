@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Batsy
-Comment=Voice assistant powered by Claude
+Comment=Voice assistant powered by Ollama and Codex
 Exec=@BATSY@ run
 Icon=audio-input-microphone
 Terminal=false

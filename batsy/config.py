@@ -1,7 +1,7 @@
 """Paths and user configuration.
 
 Config lives in ~/.config/batsy/config.toml (every key optional), the API key in
-~/.config/batsy/env (ANTHROPIC_API_KEY=...) or the environment.
+Codex authentication is managed by `codex login`; no API key is stored here.
 """
 import os
 import tomllib
@@ -18,32 +18,21 @@ SOCKET_PATH = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / f"batsy-{os.getu
 SOURCE_DIR = Path(__file__).resolve().parent
 
 DEFAULTS = {
-    # "local" = free model on this laptop via Ollama (default); "claude" = Claude API (needs an API key)
+    # Ollama is the default local brain; Codex CLI is used for complex work when available.
     "brain": {"engine": "local"},
     "local": {
         "url": "http://127.0.0.1:11434",
-        "model": "qwen2.5:3b",     # fast on 8 GB RAM; "llama3.2:3b" or "qwen2.5:1.5b" (faster, simpler) also work
+        "model": "qwen3.5:4b",     # local Ollama model; Codex CLI handles complex work when available
         "keep_alive": "2h",        # keep the model loaded so replies start instantly
         "context": 4096,
         "recent_exchanges": 4,     # short memory keeps the CPU's prompt reading fast
         "related_exchanges": 1,
         "tool_result_chars": 1500,
         "max_steps": 5,
-        "auto_claude": True,       # send complex requests to Claude Code (your Pro plan) automatically
+        "auto_codex": True,       # send complex requests to Codex automatically
     },
-    "claude": {
-        "model": "claude-opus-5-5",
-        # low = fewest thinking tokens and fastest replies; "medium"/"high" for heavy coding sessions
-        "effort": "low",
-        "max_tokens": 32000,
-        "web_tools": True,
-        "max_steps": 25,
-        # token savers
-        # (memory is local, so these only matter inside one long multi-step request)
-        "compact_at_tokens": 50000,    # summarise past this size (API minimum 50000)
-        "clear_tool_results_at": 20000,  # drop old tool outputs/images past this size
-        "keep_tool_results": 3,        # ...but keep the most recent few
-        "cache_ttl": "1h",             # voice use is bursty; a 1h cache survives the gaps between questions
+    "codex": {
+        "model": "",
     },
     "memory": {
         "recent_exchanges": 6,     # last N back-and-forths sent with each request
@@ -74,7 +63,7 @@ DEFAULTS = {
         "brain": "auto",
         "history_in_context": 8,
     },
-    # Who you are: both brains (local and Claude) use this to pitch answers and expect your vocabulary.
+    # Who you are: both brains (local and Codex) use this to pitch answers and expect your vocabulary.
     "user": {
         "name": "",               # what Batsy calls you; empty = your login name
         "about": "a college student who codes every day (Python, web, Arduino and ESP32) and does 3D design, "
@@ -103,10 +92,10 @@ DEFAULTS = {
         "device": "ipad",       # preferred Spotify Connect device (name contains this)
         "redirect_port": 8888,  # login callback http://127.0.0.1:8888/callback
     },
-    # Batsy's own budget for Claude Code (your Pro plan). Change by voice: "set my weekly Claude limit to 5 million"
-    "claude_budget": {
+    # Batsy's own budget for Codex (your Pro plan). Change by voice: "set my weekly Codex limit to 5 million"
+    "codex_budget": {
         "session_hours": 5,
-        "session_tokens": 1_500_000,   # all tokens Claude Code reports, cached reads included
+        "session_tokens": 1_500_000,
         "weekly_tokens": 10_000_000,
         "warn_at": 0.8,
     },
@@ -118,7 +107,7 @@ DEFAULTS = {
     },
     "routines": {
         "day_starts_at": 5,   # before this hour it's still "tonight": good night at 3 AM asks about today's date
-        "morning_extra": "",  # optional Claude prompt after the morning briefing, e.g. "weather in Chennai today, one line"
+        "morning_extra": "",  # optional Codex prompt after the morning briefing, e.g. "weather in Chennai today, one line"
         "custom": {},         # presets, see README
     },
     "overlay": {
@@ -140,7 +129,7 @@ DEFAULTS = {
     "camera": {
         "name": "lenovo",       # matched against the V4L2 device name; first camera if none match
         "device": None,         # force /dev/videoN by number
-        "snapshot_edge": 768,   # px sent to Claude per webcam look (~450 tokens)
+        "snapshot_edge": 768,   # px sent to Codex per webcam look (~450 tokens)
         "screen_edge": 1280,    # px per screenshot (readable text, ~1200 tokens)
     },
     "voice": {
@@ -151,7 +140,7 @@ DEFAULTS = {
         # Words Parakeet should expect (it has never heard "Batsy"); add your own project/part names here.
         # Words Parakeet rarely heard in training. Tested on mic recordings: at score 1.0 this list took tech words
         # from 11/21 to 15/21 with nothing invented in room noise; 1.5+ starts "hearing" them in silence.
-        "hotwords": ["Batsy", "Claude", "Claude Code", "GitHub", "VS Code", "Python", "API", "JSON", "Ollama", "Llama",
+        "hotwords": ["Batsy", "Codex", "Codex", "GitHub", "VS Code", "Python", "API", "JSON", "Ollama", "Llama",
                      "Arduino", "ESP32", "GPIO", "Docker", "Kubernetes", "Fedora", "npm", "Bluetooth", "repo", "commit",
                      "sketch", "serial monitor", "night mode"],
         "hotwords_score": 1.0,       # keep at 1.0; higher invents hotwords out of background noise

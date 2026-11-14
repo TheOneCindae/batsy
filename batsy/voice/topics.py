@@ -60,7 +60,7 @@ TAILSCALE = ["up", "down", "set", "status", "ip", "ping", "ssh", "funnel", "serv
              "netcheck", "whois", "login", "logout", "switch", "update", "web", "cert", "dns", "drive", "lock"]
 SHELL = ["sudo", "dnf", "git", "tailscale", "systemctl", "journalctl", "ssh", "scp", "rsync", "docker", "podman",
          "flatpak", "npm", "npx", "pip", "python3", "htop", "top", "nano", "vim", "nvim", "code", "ls", "cat", "grep",
-         "curl", "wget", "chmod", "chown", "kill", "ps", "df", "du", "free", "ping", "nmcli", "bluetoothctl", "claude",
+         "curl", "wget", "chmod", "chown", "kill", "ps", "df", "du", "free", "ping", "nmcli", "bluetoothctl", "codex",
          "batsy", "arduino-cli", "kubectl", "ollama", "neofetch", "fastfetch", "make", "cargo", "go", "node"]
 # Spoken forms recognisers produce for words they don't know -> the real word (only used for commands).
 SAID = {"tails hill": "tailscale", "tail hill": "tailscale", "a c d c": "AC/DC", "pseudo": "sudo", "sue do": "sudo", "sudo": "sudo", "tail scale": "tailscale", "tale scale": "tailscale",

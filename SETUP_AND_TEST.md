@@ -12,7 +12,7 @@ Work through this top to bottom. Tick each box as you go. Every test says **what
 - [ ] 8 GB RAM or more, about 6 GB free disk, internet connection
 - [ ] A microphone and speakers (a headset works best: Batsy won't hear itself)
 - [ ] Lenovo webcam plugged in (for the camera tests)
-- [ ] Claude Pro account (for Claude Code)
+- [ ] Codex Pro account (for Codex)
 - [ ] Optional: Spotify Premium plus the iPad with Spotify open; an Arduino board and USB cable; a few STL files and PDFs to try
 
 ---
@@ -28,21 +28,21 @@ Work through this top to bottom. Tick each box as you go. Every test says **what
 
 - [ ] **Log out and back in.** This activates Arduino serial access and the `batsy` command in new terminals.
 
-- [ ] **Log in to Claude Code once:**
+- [ ] **Log in to Codex once:**
   ```bash
-  claude
+  codex
   ```
-  Sign in with your Claude Pro account (type `/login` if it asks), then quit with `/exit`.
+  Sign in with your Codex Pro account (type `/login` if it asks), then quit with `/exit`.
 
 ## 2. Self-test (automatic)
 
-- [ ] Quick check, takes seconds and uses no Claude:
+- [ ] Quick check, takes seconds and uses no Codex:
   ```bash
   batsy selftest
   ```
   **Expect:** mostly PASS. SKIP is fine for optional parts (Spotify). Every FAIL line says how to fix it. Fix them, then run it again.
 
-- [ ] Full check. It opens windows, records 2 s from your mic, speaks, compiles an Arduino sketch, and sends one tiny Claude request:
+- [ ] Full check. It opens windows, records 2 s from your mic, speaks, compiles an Arduino sketch, and sends one tiny Codex request:
   ```bash
   batsy selftest --all
   ```
@@ -52,7 +52,7 @@ Work through this top to bottom. Tick each box as you go. Every test says **what
   - The overlay flashing a card, then a screensaver with a clock.
   - The 3D viewer opening a 40×20×10 mm box, rotating, cutting and exploding it, then closing.
   - "blink compiles for Uno".
-  - "Claude Code answers … tokens counted".
+  - "Codex answers … tokens counted".
   - **Goal: 0 failed.**
 
 - [ ] `batsy doctor` gives a second, simpler overview of the same things.
@@ -60,7 +60,7 @@ Work through this top to bottom. Tick each box as you go. Every test says **what
 ## 3. First start
 
 - [ ] In a terminal: `batsy -v`
-  **Expect:** "Batsy online." spoken. The log shows `local model qwen2.5:3b ready` within about 30 s.
+  **Expect:** "Batsy online." spoken. The log shows `local model qwen3.5:4b ready` within about 30 s.
   *(After the next login it starts by itself. That's the autostart entry.)*
 
 ---
@@ -94,21 +94,21 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 - [ ] "Open Firefox" / "Open VS Code" / "Open Files" / "Open Downloads" / "Open YouTube" → opens in about 2 s.
 - [ ] "Close Firefox" → it closes.
 
-### E. Claude (Pro): automatic for hard things
-- [ ] "Explain why the sky is blue in detail" → "…" and a precise answer from Claude in about 8–20 s.
-- [ ] "Ask Claude what a MOSFET is" → forced to Claude.
-- [ ] **Works anywhere:** "Ask Claude to list what's in my batsy folder and tell me the biggest file" → it reads `~/batsy` (not only `~/Batsy`) and answers.
-- [ ] **Guarded:** make a test folder (`mkdir ~/junk-test`), then "Ask Claude to delete the junk-test folder in my home" → Batsy asks "Claude wants to delete files recursively… Should I let it?" → say "yes" → it's gone. Try again with "no" → Claude doesn't do it.
-- [ ] "How much Claude have I used?" → percentages of your session and week budgets.
-- [ ] "Set my session Claude limit to 2 million" → confirmed.
-- [ ] *(Optional)* Set a tiny limit ("set my session Claude limit to 1000"), then ask a hard question → "I've used this session's Claude budget…", answered locally instead. Then "ask Claude anyway what a MOSFET is" → still goes through. **Set the limit back afterwards.**
+### E. Codex (Pro): automatic for hard things
+- [ ] "Explain why the sky is blue in detail" → "…" and a precise answer from Codex in about 8–20 s.
+- [ ] "Ask Codex what a MOSFET is" → forced to Codex.
+- [ ] **Works anywhere:** "Ask Codex to list what's in my batsy folder and tell me the biggest file" → it reads `~/batsy` (not only `~/Batsy`) and answers.
+- [ ] **Guarded:** make a test folder (`mkdir ~/junk-test`), then "Ask Codex to delete the junk-test folder in my home" → Batsy asks "Codex wants to delete files recursively… Should I let it?" → say "yes" → it's gone. Try again with "no" → Codex doesn't do it.
+- [ ] "How much Codex have I used?" → percentages of your session and week budgets.
+- [ ] "Set my session Codex limit to 2 million" → confirmed.
+- [ ] *(Optional)* Set a tiny limit ("set my session Codex limit to 1000"), then ask a hard question → "I've used this session's Codex budget…", answered locally instead. Then "ask Codex anyway what a MOSFET is" → still goes through. **Set the limit back afterwards.**
 
 ### F. Learn once, then instant
 - [ ] "Turn on dark mode" → "Give me a moment, I'm learning how to do that." → dark mode turns on → "Next time that'll be instant."
 - [ ] "Turn off dark mode" → learned the same way (a separate skill).
 - [ ] "Turn on dark mode" again → instant, with no "learning" message.
 - [ ] A new phrasing: "Switch to the dark theme" → no new skill; it's added to the existing one and runs.
-- [ ] **Feedback:** after a skill runs, say "no, that's wrong" → "Sorry. Let me relearn that." → Claude fixes it.
+- [ ] **Feedback:** after a skill runs, say "no, that's wrong" → "Sorry. Let me relearn that." → Codex fixes it.
 - [ ] `batsy skills` → lists the skills with how often each worked or failed.
 - [ ] "Forget how to turn on dark mode" → removed.
 
@@ -144,7 +144,7 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 - [ ] "Pull up connections for Nikola Tesla" → photo plus a facts card ("Serbian-American engineer…"), and the first line spoken.
 - [ ] "What does a capybara look like?" → picture.
 - [ ] **A new phrasing gets learned:** "Gimme a quick look at the Golden Gate Bridge" → picture (the AI understood it). Then "gimme a quick look at the Colosseum" → instant. `batsy vocab` shows the learned phrase.
-- [ ] **Technical:** "Show me the ESP32 pinout diagram" → a pinout in about 2 s. A few seconds later it may switch to a better one (Claude checked the top candidates).
+- [ ] **Technical:** "Show me the ESP32 pinout diagram" → a pinout in about 2 s. A few seconds later it may switch to a better one (Codex checked the top candidates).
 - [ ] **Natural requests:** "How big is a blue whale?" → the spoken answer also puts a picture on screen.
 - [ ] Esc, Space or a click closes the overlay.
 
@@ -155,13 +155,13 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 
 ### I. Camera (Lenovo webcam)
 - [ ] "Open the camera" → a "Batsy camera" window shows the live feed.
-- [ ] Hold up an object: "What am I holding?" → the frame flashes yellow and Claude describes it (about 8–15 s).
+- [ ] Hold up an object: "What am I holding?" → the frame flashes yellow and Codex describes it (about 8–15 s).
 - [ ] "Which component is this?" (hold an Arduino or resistor) → identified.
 - [ ] "Close the camera" → window closes.
 - [ ] Wrong camera? `batsy doctor` lists the cameras; set `[camera] device = N` in the config.
 
 ### J. Screen questions
-- [ ] Put an error message on screen: "Read this error on my screen" → Claude explains it.
+- [ ] Put an error message on screen: "Read this error on my screen" → Codex explains it.
 
 ### K. Documents and pictures (any file)
 - [ ] Open a PDF in the document viewer, then "Circle all the dates in this PDF" → "Looking at …" → a marked-up copy opens. It's in `~/Batsy/docs/…-marked.pdf` and the original is unchanged.
@@ -181,11 +181,11 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 - [ ] "Measure" → click two points → the distance is spoken.
 - [ ] "X-ray mode" · "Colour it red" · "Reset"
 - [ ] "Save it as an OBJ" → saved in `~/Batsy/3d/`.
-- [ ] **Claude:** "Is this printable?" → checks plus a card. "Add two M3 mounting holes 30 mm apart" → a new model loads next to the original. "Design a phone stand 80 mm wide" → a new model.
+- [ ] **Codex:** "Is this printable?" → checks plus a card. "Add two M3 mounting holes 30 mm apart" → a new model loads next to the original. "Design a phone stand 80 mm wide" → a new model.
 
 ### M. Arduino
 - [ ] Plug in the board. "Which Arduino boards are connected?" → port and board name.
-- [ ] "Write a sketch that blinks the LED twice a second and upload it" → Claude writes it, it compiles and uploads, and the LED blinks.
+- [ ] "Write a sketch that blinks the LED twice a second and upload it" → Codex writes it, it compiles and uploads, and the LED blinks.
 - [ ] "Read the serial port for 5 seconds" → output spoken or summarised.
 
 ### N. Spotify on the iPad (optional)
@@ -209,7 +209,7 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 - [ ] "I finished the laundry" → logged anytime. "Stop tracking gym" → removed.
 
 ### Q. Screensaver
-- [ ] "Show me the screensaver" → animated dashboard: clock, Claude session and week bars, running jobs, waiting questions, coming up. Move the mouse → it closes.
+- [ ] "Show me the screensaver" → animated dashboard: clock, Codex session and week bars, running jobs, waiting questions, coming up. Move the mouse → it closes.
 - [ ] Leave the laptop alone for 3 minutes → it appears by itself. *(If the screen goes black first, raise Settings → Power → Screen Blank.)*
 - [ ] Voice edits:
   - "Add the weather in Chennai to the screensaver"
@@ -217,7 +217,7 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
   - "Add a countdown to my exam on 12 November to the screensaver"
   - "Make the screensaver blue stars"
   - "Make the screensaver minimal / detailed"
-- [ ] **Claude redesign:** "Make the screensaver look like a cyberpunk terminal" → new look.
+- [ ] **Codex redesign:** "Make the screensaver look like a cyberpunk terminal" → new look.
 - [ ] **Auto-adapt:**
   - While a check-in question is unanswered, "Waiting for you" glows at the top.
   - While music plays, "Now playing" appears.
@@ -269,9 +269,9 @@ Talk normally. Say **"Batsy"**, wait for the chime, then speak. Or say it all in
 |---|---|
 | Doesn't react to "Batsy" | `batsy -v` and watch for "wake word heard"; check mic input level in Settings → Sound; run `batsy selftest --voice` |
 | Hears itself or wakes randomly | use a headset; trim `wake_words` in the config |
-| Slow replies | `[local] model = "qwen2.5:1.5b"`, `[voice] whisper_model = "tiny.en"` |
+| Slow replies | choose a smaller Ollama model in `[local] model`, and use `[voice] whisper_model = "tiny.en"` |
 | "My local brain isn't running" | `sudo systemctl restart ollama`, then `ollama list` |
-| Claude never used | `claude` (log in again); `batsy selftest --claude`; "how much Claude have I used?" (budget reached?) |
+| Codex never used | `codex` (log in again); `batsy selftest --codex`; "how much Codex have I used?" (budget reached?) |
 | Overlay stays behind windows | `[overlay] qt_platform = "xcb"` |
 | Overlay black, flickers or keeps restarting | `overlay.log`; it falls back by itself, or set `[overlay] renderer = "classic"` |
 | Batsy restarted by itself | `crash.log` and the end of `batsy.log` (send me both) |

@@ -6,12 +6,12 @@ from contextlib import contextmanager
 
 _lock = threading.Lock()
 _ids = itertools.count(1)
-_agents: dict[int, dict] = {}   # running work: Claude Code jobs, learning, picture checks...
+_agents: dict[int, dict] = {}   # running work: Codex jobs, learning, picture checks...
 _asks: dict[str, dict] = {}     # questions waiting for the user's answer
 
 
 @contextmanager
-def agent(label: str, kind: str = "claude"):
+def agent(label: str, kind: str = "codex"):
     aid = next(_ids)
     with _lock:
         _agents[aid] = {"label": label, "kind": kind, "since": time.time()}
