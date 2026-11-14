@@ -1,7 +1,7 @@
-"""Claude Code PreToolUse hook: Claude may run any command anywhere, but risky ones need your spoken "yes".
+"""Codex PreToolUse hook: Codex may run any command anywhere, but risky ones need your spoken "yes".
 
-Claude Code runs this before every Bash call (see claude_code.SETTINGS) and passes the call as JSON on stdin.
-Exit 0 lets it run; exit 2 blocks it and the message on stderr goes back to Claude, which then adapts.
+Codex runs this before every Bash call (see codex_adapter.SETTINGS) and passes the call as JSON on stdin.
+Exit 0 lets it run; exit 2 blocks it and the message on stderr goes back to Codex, which then adapts.
 The question is asked by the running Batsy (voice, or the `batsy chat` terminal) over its control socket.
 """
 import json
@@ -27,7 +27,7 @@ def ask_user(question: str, timeout: float = 90) -> bool:
 
 
 def check(call: dict) -> str | None:
-    """None = allowed, otherwise the reason it's blocked (told to Claude)."""
+    """None = allowed, otherwise the reason it's blocked (told to Codex)."""
     if call.get("tool_name") != "Bash":
         return None
     command = str((call.get("tool_input") or {}).get("command", ""))
@@ -38,7 +38,7 @@ def check(call: dict) -> str | None:
     if reason is None:
         return None
     short = command if len(command) < 120 else command[:117] + "..."
-    if ask_user(f"Claude wants to {reason}: {short}. Should I let it?"):
+    if ask_user(f"Codex wants to {reason}: {short}. Should I let it?"):
         return None
     return f"The user said no to this command ({reason}). Don't run it; find another way or explain why it's needed."
 

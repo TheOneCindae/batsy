@@ -3,7 +3,7 @@
 Its layout lives in screensaver.json: a theme (animated background style + accent colour) and a list of widgets.
 Batsy fills each widget with live data every refresh, and adapts the order and emphasis to what matters right now
 (budget nearly used, questions waiting, music playing, late at night). Change it by voice ("add the weather in
-Chennai to the screensaver", "make it minimal") or let Claude Code edit the JSON (`batsy saver get/set/preview`).
+Chennai to the screensaver", "make it minimal") or let Codex edit the JSON (`batsy saver get/set/preview`).
 """
 import datetime as dt
 import json
@@ -22,17 +22,17 @@ ACCENTS = {"purple": "#d646ff", "blue": "#4f9dff", "cyan": "#38e1ff", "green": "
            "orange": "#ff9d3a", "pink": "#ff5fbf", "gold": "#f5c542", "yellow": "#ffe14d", "white": "#f0f0f0",
            "teal": "#2fd4b5", "batman": "#ffc20e"}
 WIDGETS = {  # type: (default title, column span)
-    "clock": ("", 3), "claude_budget": ("Claude", 2), "local_tokens": ("Local AI · today", 1),
+    "clock": ("", 3), "codex_budget": ("Codex", 2), "local_tokens": ("Local AI · today", 1),
     "running": ("Running now", 1), "waiting": ("Waiting for you", 1), "upcoming": ("Coming up", 1),
     "agenda": ("Today's plan", 1), "system": ("Laptop", 1), "now_playing": ("Now playing", 1),
     "countdown": ("Countdown", 1), "note": ("Note", 1), "weather": ("Weather", 1), "photo": ("", 1),
     "project": ("Project", 1), "command": ("", 1), "quote": ("", 2),
 }
 PRESETS = {
-    "default": [{"type": "clock"}, {"type": "claude_budget"}, {"type": "local_tokens"}, {"type": "running"},
+    "default": [{"type": "clock"}, {"type": "codex_budget"}, {"type": "local_tokens"}, {"type": "running"},
                 {"type": "waiting"}, {"type": "upcoming"}],
     "minimal": [{"type": "clock"}, {"type": "waiting"}, {"type": "upcoming"}],
-    "detailed": [{"type": "clock"}, {"type": "claude_budget"}, {"type": "system"}, {"type": "running"},
+    "detailed": [{"type": "clock"}, {"type": "codex_budget"}, {"type": "system"}, {"type": "running"},
                  {"type": "waiting"}, {"type": "upcoming"}, {"type": "agenda"}, {"type": "now_playing"},
                  {"type": "quote"}],
     "focus": [{"type": "clock"}, {"type": "upcoming"}, {"type": "quote"}],
@@ -139,12 +139,12 @@ def _command(w: dict) -> dict:
 
 def payload(app) -> dict:
     """Spec + live data for every widget, adapted to the moment."""
-    from batsy import activity, claude_code, usage
+    from batsy import activity, codex_adapter, usage
     from batsy.memory_store import get_store
 
     spec = load()
     act = activity.snapshot()
-    budget = claude_code.budget(app.cfg)
+    budget = codex_adapter.budget(app.cfg)
     widgets = [dict(w) for w in spec["widgets"]]
     theme = dict(spec["theme"])
     hour = dt.datetime.now().hour
@@ -168,7 +168,7 @@ def payload(app) -> dict:
             widgets.append({"type": "running", "auto": True})
         pct = max(budget["session"]["pct"] or 0, budget["week"]["pct"] or 0)
         for w in widgets:  # urgent things glow and move up
-            if (w["type"] == "claude_budget" and pct >= 80) or (w["type"] == "waiting" and act["asks"]):
+            if (w["type"] == "codex_budget" and pct >= 80) or (w["type"] == "waiting" and act["asks"]):
                 w["highlight"] = True
         widgets.sort(key=lambda w: (w["type"] != "clock", not w.get("highlight")))
         if hour >= 23 or hour < 6:  # night: calm and dim
@@ -177,7 +177,7 @@ def payload(app) -> dict:
     data = {}
     for i, w in enumerate(widgets):
         t = w["type"]
-        if t == "claude_budget":
+        if t == "codex_budget":
             d = budget
         elif t == "local_tokens":
             d = usage.stats()["today"]
@@ -225,7 +225,7 @@ def payload(app) -> dict:
 ALIASES = [
     (r"weather(?: in| for)? ?([a-z ]+)?", "weather"), (r"(?:system|laptop|cpu|battery|computer) ?(?:stats|status|info)?", "system"),
     (r"(?:music|song|now playing|spotify|what'?s playing)", "now_playing"), (r"clock|time", "clock"),
-    (r"claude (?:usage|budget|limits?)|budget|limits?", "claude_budget"), (r"(?:local )?tokens", "local_tokens"),
+    (r"codex (?:usage|budget|limits?)|budget|limits?", "codex_budget"), (r"(?:local )?tokens", "local_tokens"),
     (r"(?:running|agents|jobs|what'?s running)", "running"), (r"(?:questions|waiting|what you'?re waiting for)", "waiting"),
     (r"(?:chores|tasks|habits|coming up|upcoming)", "upcoming"), (r"(?:agenda|plan|today'?s plan|schedule)", "agenda"),
     (r"(?:photos?|pictures?|slideshow)(?: from (?:my )?([a-z ]+))?", "photo"), (r"quotes?", "quote"),
@@ -317,14 +317,14 @@ def handle(n: str, app) -> str | None:
                 break
     changed = [c for c in changed if c]
     if not changed:
-        return None  # something fancier: let Claude edit the layout
+        return None  # something fancier: let Codex edit the layout
     save(spec)
     app.refresh_saver()
     return "Screensaver updated: " + ", ".join(changed) + "."
 
 
 def cli(argv: list[str]) -> None:
-    """`batsy saver get | set JSON | preview` (Claude Code uses this to redesign the screensaver)."""
+    """`batsy saver get | set JSON | preview` (Codex uses this to redesign the screensaver)."""
     if not argv or argv[0] == "get":
         print(json.dumps(load(), indent=1))
     elif argv[0] == "set":
@@ -349,7 +349,7 @@ The current layout (JSON):
 Layout format: {{"theme": {{"style": aurora|stars|waves|orb|minimal, "accent": "#rrggbb"}}, "auto_adapt": true|false,
 "widgets": [ ... ]}}. Widgets are drawn in order: "clock" spans the top, and the rest flow into rows of 3 columns.
 Each widget can take "title" and "span" (1-3). Types:
-  clock, claude_budget, local_tokens, running, waiting, upcoming, agenda, system, now_playing, quote,
+  clock, codex_budget, local_tokens, running, waiting, upcoming, agenda, system, now_playing, quote,
   countdown {{title, date: ISO datetime}}, note {{text}}, weather {{city}}, photo {{folder, every: seconds}},
   project {{name}}, command {{title, command: bash, every: seconds}} (shows up to 8 lines of the command's output,
   so you can build any custom widget with a shell one-liner or a small script).

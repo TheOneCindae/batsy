@@ -72,7 +72,7 @@ def _there(app, m, text):
 
 @handles(r"(?:who are you|what(?:'s| is) your name|what are you|introduce yourself)")
 def _who(app, m, text):
-    return "I'm Batsy, your assistant on this laptop. I run here, and ask Claude when something needs real thinking."
+    return "I'm Batsy, your assistant on this laptop. I run here, and ask Codex when something needs real thinking."
 
 
 @handles(r"(?:what can you do|what do you do|help|what are your skills|how can you help(?: me)?)")

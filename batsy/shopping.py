@@ -3,7 +3,7 @@
 "How much is the ESP32 DevKit V1" / "compare prices for a Raspberry Pi 5 8GB" / "where can I buy PETG filament"
 -> the same product looked up on Amazon, Flipkart, Robu, Robocraze, Croma, Reliance Digital... at once, the
 cheapest said out loud and the full comparison (price, listing name, stock, link) on screen and in a page you can
-open. "Find me a 55 inch TV under 50000" / "best microcontroller for a drone" (no exact model) -> Claude picks a
+open. "Find me a 55 inch TV under 50000" / "best microcontroller for a drone" (no exact model) -> Codex picks a
 few current models that fit, then each is priced across the stores.
 
 How prices are read, most reliable first (no store has an API for this):
@@ -13,7 +13,7 @@ How prices are read, most reliable first (no store has an API for this):
   schema.org Product data shops publish for Google (JSON-LD), or the price meta tags.
 - Stores whose pages only fill in prices with JavaScript (Croma, Tata Cliq...): the price in the search result
   snippet if there is one ("approx."), otherwise just the link.
-Prices are as listed, before delivery charges. Nothing here costs Claude tokens except picking models for a vague
+Prices are as listed, before delivery charges. Nothing here costs Codex tokens except picking models for a vague
 request.
 """
 import datetime as dt
@@ -435,9 +435,9 @@ any budget). Use the exact model names stores list them under. Reply with JSON o
 
 
 def pick_models(request: str, n: int = 4) -> list[dict]:
-    from batsy import claude_code
+    from batsy import codex_adapter
 
-    reply = claude_code.run(PICK_BRIEF.format(request=request, n=n), "shopping: " + request[:30], timeout=150,
+    reply = codex_adapter.run(PICK_BRIEF.format(request=request, n=n), "shopping: " + request[:30], timeout=150,
                             args=["--allowedTools", "WebSearch"])
     m = re.search(r"\[.*\]", reply, re.S)
     try:
@@ -552,7 +552,7 @@ SHOP = [re.compile(p) for p in (
     r"^(?:buy|order|shop for) (?:me )?(?:an? |some |the )?(?P<q>.+)$",
 )]
 NOT_PRODUCT = re.compile(r"^(?:time|it|that|this|ram|memory|battery|disk|storage|space|cpu|data|traffic|"
-                         r"claude|my|tokens?)\b|\b(?:left|used|weigh|weight|far|long|times|plus|minus|divided)\b")
+                         r"codex|my|tokens?)\b|\b(?:left|used|weigh|weight|far|long|times|plus|minus|divided)\b")
 OPEN = re.compile(r"^(?:open|show me|take me to|buy|go to) (?:the )?(?P<which>cheapest|first|second|third|"
                   r"[a-z ]+?)(?: one| link| listing| deal| offer| page)?(?: please)?$")
 OPEN_REPORT = re.compile(r"^(?:open|show me) (?:the |that )?(?:full )?(?:comparison|price comparison|report|prices|"
@@ -639,14 +639,14 @@ class ShopTalk:
         self.app.show_visual("card", f"{product} | " + "\n".join(_card_line(o) for o in offers[:8]))
 
     def _present_choices(self, request: str, raw: str, cap: float | None) -> None:
-        from batsy import claude_code
+        from batsy import codex_adapter
 
-        if not __import__("shutil").which("claude") or claude_code.over_budget(self.cfg):
-            self.app._reply("To suggest models I need Claude, which isn't available right now. Tell me an exact model "
+        if not __import__("shutil").which("codex") or codex_adapter.over_budget(self.cfg):
+            self.app._reply("To suggest models I need Codex, which isn't available right now. Tell me an exact model "
                             "and I'll compare its prices.")
             return
         self.app._reply("Let me find a few good options, then compare their prices.")
-        self.app.overlay.send("status", text="Picking models with Claude")
+        self.app.overlay.send("status", text="Picking models with Codex")
         picks = pick_models(raw)
         if not picks:
             self.app._reply("I couldn't come up with specific models for that. Try naming a brand or model.")

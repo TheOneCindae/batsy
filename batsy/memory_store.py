@@ -1,6 +1,6 @@
 """Local memory: every exchange and remembered fact lives in SQLite on this laptop.
 
-Instead of sending the whole conversation to Claude each time, Batsy sends only a short recent
+Instead of sending the whole conversation to Codex each time, Batsy sends only a short recent
 transcript plus the few memories a local full-text search (FTS5) finds relevant. That keeps each
 request small no matter how long Batsy has been running.
 """

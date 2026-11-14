@@ -2,8 +2,8 @@
 
 Reading is local: PDF text via PyMuPDF, OCR via Tesseract for images and scans, docx and text files directly.
 Marking up is precise: text to mark is located exactly (PDF text positions, OCR word boxes); shapes use
-coordinates from `render` (the same pixels Claude looked at). Results go to ~/Batsy/docs/ and the original
-is never modified. Also a CLI (`batsy doc ...`) so Claude Code can drive it and check its own work.
+coordinates from `render` (the same pixels Codex looked at). Results go to ~/Batsy/docs/ and the original
+is never modified. Also a CLI (`batsy doc ...`) so Codex can drive it and check its own work.
 """
 import json
 import os
@@ -416,7 +416,7 @@ def learn(path: Path) -> str:
     return f"{len(pages)} page{'s' if len(pages) != 1 else ''}, about {words} words"
 
 
-# --- CLI for Claude Code: `batsy doc <cmd> ...` -------------------------------------------------------------
+# --- CLI for Codex: `batsy doc <cmd> ...` -------------------------------------------------------------
 def cli(argv: list[str]) -> None:
     import argparse
 

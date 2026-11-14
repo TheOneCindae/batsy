@@ -21,9 +21,11 @@ from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetrics, QGuiAppli
                            QPainterPath, QPixmap, QRegion, QTextOption)
 from PySide6.QtWidgets import QApplication, QWidget
 
-from batsy.config import DATA_DIR
+from batsy.config import DATA_DIR, SOURCE_DIR
 
 LOGO = DATA_DIR / "assets" / "bat.svg"
+if not LOGO.exists():
+    LOGO = SOURCE_DIR / "ui" / "bat.svg"
 FONTS = Path(__file__).resolve().parent / "ui" / "fonts"
 SIGNAL = QColor(255, 194, 14)
 BONE = QColor(238, 232, 218)

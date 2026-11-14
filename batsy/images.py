@@ -3,7 +3,7 @@
 Not "top search result": candidates come from the live web (DuckDuckGo images: current photos, pinouts,
 diagrams), the exact Wikipedia entity's editor-chosen image, and Wikimedia Commons. Each is scored on
 match, source trust (e.g. Adafruit / Random Nerd Tutorials for pinouts; stock-photo sites penalised),
-curated quality, resolution and shape. For technical images (pinouts, schematics...) Claude Code then
+curated quality, resolution and shape. For technical images (pinouts, schematics...) Codex then
 looks at the top few and picks the correct, legible one; the screen updates if it disagrees.
 Facts come from the entity's encyclopedia summary, not a search snippet.
 """
@@ -197,7 +197,7 @@ def _source_bonus(c: dict) -> float:
 
 def best_image(query: str, entity: Entity | None = None, on_better=None) -> tuple[Path, str]:
     """The best picture for the query: (local path, caption). on_better(path, caption) is called later
-    if Claude, looking at the top candidates, picks a better one (technical images only)."""
+    if Codex, looking at the top candidates, picks a better one (technical images only)."""
     technical = bool(TECHNICAL.search(query.lower()))
     try:
         entity = entity or (None if technical else resolve(query))
@@ -267,7 +267,7 @@ def best_image(query: str, entity: Entity | None = None, on_better=None) -> tupl
             options = [first] + got
             if len(options) < 2:
                 return
-            pick = claude_pick(query, [p for p, _ in options])
+            pick = codex_pick(query, [p for p, _ in options])
             if pick and 1 < pick <= len(options):
                 path, c = options[pick - 1]
                 on_better(path, caption_for(c))
@@ -276,9 +276,9 @@ def best_image(query: str, entity: Entity | None = None, on_better=None) -> tupl
     return first[0], caption_for(first[1])
 
 
-def claude_pick(query: str, paths: list[Path]) -> int | None:
-    """Let Claude Code look at candidate images and choose the right one (1-based), or None."""
-    from batsy import claude_code
+def codex_pick(query: str, paths: list[Path]) -> int | None:
+    """Let Codex look at candidate images and choose the right one (1-based), or None."""
+    from batsy import codex_adapter
 
     vis = WORKSPACE / ".vision"
     vis.mkdir(parents=True, exist_ok=True)
@@ -291,7 +291,7 @@ def claude_pick(query: str, paths: list[Path]) -> int | None:
     prompt = (f"Read each of these images:\n{listing}\nWhich one best shows: \"{query}\"? It must be correct "
               f"(right part/model), complete, legible, and not watermarked. Reply with only the number, or 0 if none.")
     try:
-        out = claude_code.run(prompt, "checking pictures", cwd=WORKSPACE, timeout=120, args=["--allowedTools", "Read"])
+        out = codex_adapter.run(prompt, "checking pictures", cwd=WORKSPACE, timeout=120, args=["--allowedTools", "Read"])
         m = re.search(r"\b([0-9])\b", out)
         return int(m.group(1)) if m else None
     except Exception:

@@ -17,7 +17,7 @@ from batsy.overlay import Overlay
 from batsy.routines import Routines
 from batsy import apps, calc, instant, lifecycle, model3d, system
 from batsy.learner import Automator, Learner
-from batsy.learning import ACTION, NEGATIVE, SkillBook, claude_cli
+from batsy.learning import ACTION, NEGATIVE, SkillBook, codex_cli
 from batsy.vocab import get_vocab
 from batsy.config import SOCKET_PATH
 from batsy.tools import ToolContext, build_registry
@@ -60,14 +60,9 @@ class Batsy:
         self.speaker = Speaker(cfg, enabled=speak)
         self.ctx = ToolContext(cfg, announce=self.announce, confirm=self._confirm)
         self.registry = build_registry(self.ctx)
-        if cfg.get("brain.engine") == "claude":  # optional: Claude API with your own key (pay per use)
-            from batsy.brain import Brain
+        from batsy.local_brain import LocalBrain
 
-            self.brain = Brain(cfg, self.registry)
-        else:
-            from batsy.local_brain import LocalBrain
-
-            self.brain = LocalBrain(cfg, self.registry)
+        self.brain = LocalBrain(cfg, self.registry)
         self.turn_lock = threading.Lock()
         self.confirm_handler = self._confirm_console
         self.confirm_request: dict | None = None
@@ -85,10 +80,10 @@ class Batsy:
         if self.overlay.enabled:
             self.brain.status = lambda text: self.overlay.send("status", text=text)
         self.routines = Routines(self)
-        from batsy import claude_code
+        from batsy import codex_adapter
         from batsy.tasks import TaskTalk
 
-        claude_code.CFG, claude_code.announce = cfg, self.announce
+        codex_adapter.CFG, codex_adapter.announce = cfg, self.announce
         self.listen_requested = threading.Event()  # Batsy asked something: listen without the wake word
         self.tasks = TaskTalk(self)
         from batsy.projects import ProjectTalk
@@ -102,7 +97,7 @@ class Batsy:
 
         self.shop = ShopTalk(self)  # "how much is X", "compare prices for X", "find me a TV under 50k"
         self.vocab = get_vocab()
-        self.skills = SkillBook(claude_cli, show=lambda q: self.show_visual("show", q))
+        self.skills = SkillBook(codex_cli, show=lambda q: self.show_visual("show", q))
         self.learner = Learner()  # logs every request, remembers answers, turns repeats into code
         self.automator = Automator(self, self.learner)
         self.last_turn = 0.0
@@ -221,9 +216,9 @@ class Batsy:
         abort = getattr(self, "_turn_abort", None)
         if abort is not None:
             abort.set()
-        from batsy import claude_code
+        from batsy import codex_adapter
 
-        claude_code.cancel()  # stop the Claude Code run itself, not just its voice
+        codex_adapter.cancel()  # stop the Codex run itself, not just its voice
         self.overlay.muted = True
         self.listen_requested.clear()
         self.speaker.stop()
@@ -358,26 +353,26 @@ class Batsy:
         if not self.voice:
             print(f"\n[Batsy asks] {question}")
 
-    def _claude_budget_command(self, n: str) -> bool:
-        from batsy import claude_code
+    def _codex_budget_command(self, n: str) -> bool:
+        from batsy import codex_adapter
 
-        m = re.fullmatch(r"set (?:my |the )?(weekly|week|session) (?:claude )?(?:limit|budget) to (\d+(?:\.\d+)?) ?"
+        m = re.fullmatch(r"set (?:my |the )?(weekly|week|session) (?:codex )?(?:limit|budget) to (\d+(?:\.\d+)?) ?"
                          r"(million|m|thousand|k)?(?: tokens)?", n)
         if m:
             mult = {"million": 1e6, "m": 1e6, "thousand": 1e3, "k": 1e3}.get(m.group(3) or "", 1)
             which = "weekly" if m.group(1).startswith("week") else "session"
-            claude_code.set_limit(which, int(float(m.group(2)) * mult))
-            self._reply(f"Your {which} Claude budget is now {float(m.group(2)):g} {m.group(3) or ''} tokens.".replace("  ", " "))
+            codex_adapter.set_limit(which, int(float(m.group(2)) * mult))
+            self._reply(f"Your {which} Codex budget is now {float(m.group(2)):g} {m.group(3) or ''} tokens.".replace("  ", " "))
             return True
-        if re.fullmatch(r"(how much )?claude (usage|budget|left)|how much claude (have i used|is left|do i have left)|"
-                        r"how much of my claude (budget|limit) (have i used|is left)", n):
-            b = claude_code.budget(self.cfg)
+        if re.fullmatch(r"(how much )?codex (usage|budget|left)|how much codex (have i used|is left|do i have left)|"
+                        r"how much of my codex (budget|limit) (have i used|is left)", n):
+            b = codex_adapter.budget(self.cfg)
             parts = []
             for key in ("session", "week"):
                 x = b[key]
                 if x["limit"]:
                     parts.append(f"{x['pct']:.0f} percent of this {key}'s budget")
-            self._reply("You've used " + " and ".join(parts) + "." if parts else "No Claude budget is set.")
+            self._reply("You've used " + " and ".join(parts) + "." if parts else "No Codex budget is set.")
             return True
         return False
 
@@ -396,7 +391,7 @@ class Batsy:
             log.warning("result file missing: %s", path)
             return None
         self.last_file = path
-        if path.suffix.lower() in model3d.MODEL_EXTS:  # a model Claude made or edited: show it in the viewer
+        if path.suffix.lower() in model3d.MODEL_EXTS:  # a model Codex made or edited: show it in the viewer
             model3d.VIEWER.open(path)
             return path.name
         self._open(str(path))
@@ -408,8 +403,8 @@ class Batsy:
         return path.name
 
     def _better_picture(self, path, caption: str) -> None:
-        """Claude looked at the candidates and preferred another one: swap it in."""
-        log.info("Claude picked a better picture: %s", caption)
+        """Codex looked at the candidates and preferred another one: swap it in."""
+        log.info("Codex picked a better picture: %s", caption)
         if self.overlay.enabled:
             self.overlay.image(path, caption)
         else:
@@ -439,7 +434,7 @@ class Batsy:
         return d["title"]
 
     def speak_brief(self, prompt: str) -> None:
-        """Run a short Claude request from a routine and speak the answer (costs tokens)."""
+        """Run a short Codex request from a routine and speak the answer (costs tokens)."""
         self.run_turn(prompt, "routine", self._reply, threading.Event(), self._confirm_console)
 
     def _reply(self, text: str) -> None:
@@ -523,10 +518,10 @@ class Batsy:
             route = getattr(self.brain, "route", "full")
             secs = time.time() - t0
             self.learner.record(text, n, route, secs, reply)
-            if route in ("quick", "full", "claude") and secs > 6 and not abort.is_set():
-                self.automator.learn_soon(text, n)  # slow once is enough: have Claude make it instant
-            plain = not [a for a in getattr(self.brain, "last_actions", []) if a != "answered by Claude"]
-            if route in ("quick", "claude") and plain and not abort.is_set():
+            if route in ("quick", "full", "codex") and secs > 6 and not abort.is_set():
+                self.automator.learn_soon(text, n)  # slow once is enough: have Codex make it instant
+            plain = not [a for a in getattr(self.brain, "last_actions", []) if a != "answered by Codex"]
+            if route in ("quick", "codex") and plain and not abort.is_set():
                 self.learner.remember(text, n, reply)
             self._learn_phrase(text)
             learned = getattr(self.brain, "last_skill_run", None)
@@ -600,7 +595,7 @@ class Batsy:
                 self._route = "command"
                 self._reply(said)
                 return True
-        if self._claude_budget_command(n):
+        if self._codex_budget_command(n):
             return True
         if self._voiceprint_command(n) or self._wake_training(n):
             return True
@@ -687,7 +682,7 @@ class Batsy:
         if hit:
             self._run_skill(hit[0], hit[1], text)
             return True
-        if re.match(r"(?:hey |ok )?ask (?:claude|cloud|clawed|claud)\b", text.strip(" .!?"), re.I):
+        if re.match(r"(?:hey |ok )?ask (?:codex|cloud|clawed|claud)\b", text.strip(" .!?"), re.I):
             return False  # a full turn (status on screen, barge-in, voice confirmations), not a local command
         if n in RESET_PHRASES:
             self.brain.reset()
@@ -907,7 +902,7 @@ class Batsy:
             st = self.learner.stats()
             routes = st["routes"]
             fast = sum(c for r, (c, _) in routes.items() if r in ("instant", "command", "skill", "cache"))
-            slow = sum(c for r, (c, _) in routes.items() if r in ("quick", "full", "claude", "look", "3d", "doc"))
+            slow = sum(c for r, (c, _) in routes.items() if r in ("quick", "full", "codex", "look", "3d", "doc"))
             self._reply(f"This week, {fast} requests were instant and {slow} needed a model. I remember "
                         f"{st['remembered']} answers and have turned {st['automated']} repeated requests into code.")
             return True
@@ -1156,7 +1151,7 @@ class ControlServer(threading.Thread):
                 send({"confirm": question})
                 return safety.is_yes(f.readline())
 
-            if "confirm_only" in req:  # batsy.guard: Claude Code wants to run something risky
+            if "confirm_only" in req:  # batsy.guard: Codex wants to run something risky
                 yes = False
                 try:
                     yes = self.app._confirm(str(req["confirm_only"]))

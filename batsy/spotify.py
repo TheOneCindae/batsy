@@ -5,7 +5,7 @@ so Batsy talks to Spotify's servers, which relay commands to whichever device is
 Needs Spotify Premium and a one-time `batsy spotify-login`.
 
 Common commands ("play X", "pause", "next", "what's playing") are parsed here locally, so they
-cost no Claude tokens at all. The `spotify` tool covers anything fancier.
+cost no Codex tokens at all. The `spotify` tool covers anything fancier.
 """
 import base64
 import hashlib
@@ -736,7 +736,7 @@ def handle_local(sp: Spotify, n: str) -> str | None:
             return sp.transfer(device) if device else sp.resume()
         if m.group(1) in ("queue", "add") or m.group(4):
             if m.group(1) == "add" and not m.group(4):
-                return None  # "add X" without "to the queue" is ambiguous; let Claude handle it
+                return None  # "add X" without "to the queue" is ambiguous; let Codex handle it
             return sp.queue(what)
         kind, query = parse_play(what)
         return sp.play(query, kind, device)

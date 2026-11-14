@@ -1,9 +1,9 @@
 """Learn once, run locally forever after.
 
-The first time Batsy meets a new kind of *action* ("turn on dark mode", "connect my earbuds"), Claude Code
+The first time Batsy meets a new kind of *action* ("turn on dark mode", "connect my earbuds"), Codex
 writes a small Python skill for it. Batsy checks and runs that skill and saves it. After that, the same kind
 of request (any phrasing in its TRIGGERS) runs the code directly: no AI, about as fast as the action itself.
-Feedback closes the loop: a complaint ("no, that's wrong") or a crash counts as a failure and Claude rewrites
+Feedback closes the loop: a complaint ("no, that's wrong") or a crash counts as a failure and Codex rewrites
 the skill with the complaint; two failures in a row disable it until it's relearned; each clean use counts
 as a success.
 """
@@ -120,7 +120,7 @@ def norm_template(t: str) -> str:
 
 
 def _extract(reply: str) -> tuple[str, str]:
-    """Claude's reply -> ("skill", code), ("same", "name | template") or ("answer", text)."""
+    """Codex's reply -> ("skill", code), ("same", "name | template") or ("answer", text)."""
     same = re.search(r"^\s*SAME:\s*(.+)$", reply, re.M)
     if same and "```" not in reply:
         return "same", same.group(1).strip()
@@ -164,8 +164,8 @@ def validate(code: str) -> tuple[list[str], str | None]:
 
 
 class SkillBook:
-    def __init__(self, ask_claude, show=None):
-        self.ask_claude = ask_claude      # (prompt) -> reply text, via Claude Code on the Pro plan
+    def __init__(self, ask_codex, show=None):
+        self.ask_codex = ask_codex      # (prompt) -> reply text, via Codex on the Pro plan
         self.show = show                  # (query) -> put a picture on screen
         self.lock = threading.Lock()
         self.db = sqlite3.connect(str(DB), check_same_thread=False)
@@ -268,7 +268,7 @@ class SkillBook:
     # --- learning ----------------------------------------------------------
     def learn(self, request: str, confirm, execute: bool = True, happened: str = "", previous: str | None = None,
               complaint: str | None = None, name: str | None = None, attempts: int = 3) -> dict:
-        """Ask Claude to write (or fix) a skill for this request.
+        """Ask Codex to write (or fix) a skill for this request.
         Returns {"kind": "answer", "text"} or {"kind": "skill", "name", "spoken", "ok"}."""
         n = norm(request)
         extra = ""
@@ -280,7 +280,7 @@ class SkillBook:
             extra += f"\nIt went wrong. The user said / the error was: {complaint}\nFix it.\n"
         catalog = self.catalog(exclude=name)
         for attempt in range(attempts):
-            reply = self.ask_claude(TEACH.format(request=request, extra=extra, catalog=catalog))
+            reply = self.ask_codex(TEACH.format(request=request, extra=extra, catalog=catalog))
             kind, body = _extract(reply)
             if kind == "answer":
                 return {"kind": "answer", "text": body}
@@ -313,7 +313,7 @@ class SkillBook:
             if ok:
                 self._saved(skill, request)
                 return {"kind": "skill", "name": skill, "spoken": spoken, "ok": True}
-            # failed on the real request: put the old version back and let Claude fix it
+            # failed on the real request: put the old version back and let Codex fix it
             if old is not None:
                 path.write_text(old)
             else:
@@ -324,7 +324,7 @@ class SkillBook:
                 "ok": False}
 
     def catalog(self, exclude: str | None = None, limit: int = 60) -> str:
-        """One short line per existing skill, so Claude can spot a new phrasing of something already learned."""
+        """One short line per existing skill, so Codex can spot a new phrasing of something already learned."""
         lines = []
         for path in sorted(SKILLS_DIR.glob("*.py"))[:limit]:
             if path.stem == exclude:
@@ -410,9 +410,9 @@ class SkillBook:
         return out
 
 
-def claude_cli(prompt: str, timeout: int = 180) -> str:
-    """Teaching call (Claude only writes text here)."""
-    from batsy import claude_code
+def codex_cli(prompt: str, timeout: int = 180) -> str:
+    """Teaching call (Codex only writes text here)."""
+    from batsy import codex_adapter
 
-    out = claude_code.run(prompt, "learning a new skill", cwd=WORKSPACE, timeout=timeout)
-    return out if out.strip() else "ANSWER: Claude didn't answer."
+    out = codex_adapter.run(prompt, "learning a new skill", cwd=WORKSPACE, timeout=timeout)
+    return out if out.strip() else "ANSWER: Codex didn't answer."

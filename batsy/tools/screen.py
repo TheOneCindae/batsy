@@ -1,4 +1,4 @@
-"""Let Claude see, on request only: the live camera window's latest frame, a webcam photo, or the screen.
+"""Let Codex see, on request only: the live camera window's latest frame, a webcam photo, or the screen.
 
 Images are the most expensive thing Batsy sends, so they're captured only when the user asks and
 downscaled hard (a 768px frame is ~450 tokens; full HD would be ~2700).

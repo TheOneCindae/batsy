@@ -10,7 +10,7 @@ describe it, and gives you updates on it.
 
 GitHub: public repos work with just your username ([github] user, or detected from your local clones). For
 private repos put GITHUB_TOKEN=... in ~/.config/batsy/env (or have `gh auth login` done). All matching is local;
-nothing is sent to an AI unless two candidates are too close to call and Claude is available.
+nothing is sent to an AI unless two candidates are too close to call and Codex is available.
 """
 import datetime as dt
 import difflib
@@ -445,7 +445,7 @@ def spoken_names(limit: int = 40) -> list[str]:
 
 
 # --- identifying "the project I mean" ---------------------------------------------------------------------------------
-def identify(description: str, cfg=None, ask_claude=None, wait: bool = True) -> dict:
+def identify(description: str, cfg=None, ask_codex=None, wait: bool = True) -> dict:
     """{"best": candidate|None, "confident": bool, "options": [top candidates]} for a vague description.
     wait=False never builds the index on the spot (a first scan takes a few seconds): nothing found instead."""
     idx = index(cfg, wait=wait)
@@ -469,8 +469,8 @@ def identify(description: str, cfg=None, ask_claude=None, wait: bool = True) -> 
         return {"best": None, "confident": False, "options": [c for _, c in ranked[:3] if _ > 0.2]}
     best_s, best = top[0]
     confident = _confident(top)
-    if not confident and ask_claude and len(top) > 1:
-        pick = _claude_pick(description, [c for _, c in top], ask_claude)
+    if not confident and ask_codex and len(top) > 1:
+        pick = _codex_pick(description, [c for _, c in top], ask_codex)
         if pick is not None:
             return {"best": pick, "confident": True, "options": [c for _, c in top]}
     return {"best": best, "confident": confident, "options": [c for _, c in top]}
@@ -484,10 +484,10 @@ def _confident(ranked: list[tuple[float, dict]]) -> bool:
     return best >= 0.9 and best - second >= 0.25 or best >= 1.6 and best - second >= 0.12
 
 
-def _claude_pick(description: str, options: list[dict], ask_claude) -> dict | None:
+def _codex_pick(description: str, options: list[dict], ask_codex) -> dict | None:
     lines = [f"{i + 1}. {label(c)}: {(c.get('description') or '')[:120]} | files: {', '.join((c.get('files') or [])[:12])}"
              f" | README: {' '.join((c.get('readme') or '').split())[:200]}" for i, c in enumerate(options)]
-    reply = ask_claude(f'The user described one of their projects as: "{description}". Which of these is it? '
+    reply = ask_codex(f'The user described one of their projects as: "{description}". Which of these is it? '
                        f"Reply with only the number, or 0 if none fits.\n" + "\n".join(lines))
     m = re.search(r"\d+", reply or "")
     if m and 1 <= int(m.group()) <= len(options):
@@ -869,14 +869,14 @@ class ProjectTalk:
         except Exception:
             pass
 
-    def _claude(self):
-        """A text-only Claude call to settle a close call between candidates (None if Claude isn't available)."""
+    def _codex(self):
+        """A text-only Codex call to settle a close call between candidates (None if Codex isn't available)."""
         try:
-            from batsy import claude_code
+            from batsy import codex_adapter
 
-            if not shutil.which("claude") or claude_code.over_budget(self.cfg):
+            if not shutil.which("codex") or codex_adapter.over_budget(self.cfg):
                 return None
-            return lambda prompt: claude_code.run(prompt, "which project", timeout=60, args=["--model", "haiku"])
+            return lambda prompt: codex_adapter.run(prompt, "which project", timeout=60, args=["--model", "haiku"])
         except Exception:
             return None
 
@@ -947,7 +947,7 @@ class ProjectTalk:
         check = f" and check in {describe(sched)}" if sched else ""
         self._say(f"Got it, I'll remember your {title} project{check}.")  # said now: finding it can take a moment
         self._status("Looking for it on GitHub and the laptop")
-        res = identify(f"{about} {title}", self.cfg, self._claude())
+        res = identify(f"{about} {title}", self.cfg, self._codex())
         if res["best"] and res["confident"]:
             self.store.link(tid, res["best"])
             p.update(repo=res["best"].get("repo"), path=res["best"].get("path"), url=res["best"].get("url"))
@@ -1034,7 +1034,7 @@ class ProjectTalk:
                     p.update(repo=res["best"].get("repo"), path=res["best"].get("path"), url=res["best"].get("url"))
             return p, True
         sure = bool(PROJECT_WORDS.search(n or what))  # clearly about a project: worth waiting for a first scan
-        res = identify(what, self.cfg, self._claude() if sure else None, wait=sure)
+        res = identify(what, self.cfg, self._codex() if sure else None, wait=sure)
         if res["best"] and (res["confident"] or len(res["options"]) == 1 and sure):
             c = dict(res["best"])
             c["title"] = c["name"]

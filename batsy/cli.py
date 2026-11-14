@@ -26,15 +26,12 @@ def _setup_logging(verbose: bool) -> None:
         handlers.append(logging.StreamHandler())
     logging.basicConfig(level=logging.INFO, handlers=handlers,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    for noisy in ("httpx", "httpx2", "anthropic", "faster_whisper"):
+    for noisy in ("httpx", "httpx2", "openai", "faster_whisper"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _require_key() -> None:
-    if Config.load().get("brain.engine") != "claude":
-        return  # local brain needs no key
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        sys.exit(f"No Claude API key. Put ANTHROPIC_API_KEY=sk-ant-... in {CONFIG_DIR / 'env'} (chmod 600).")
+    return
 
 
 def _single_instance():
@@ -201,9 +198,9 @@ def cmd_vocab(cfg, args) -> None:
 
 
 def cmd_skills(cfg, args) -> None:
-    from batsy.learning import SkillBook, claude_cli
+    from batsy.learning import SkillBook, codex_cli
 
-    book = SkillBook(claude_cli)
+    book = SkillBook(codex_cli)
     if args.forget:
         print("Removed." if book.forget(args.forget) else "No such skill.")
         return
@@ -266,22 +263,21 @@ def cmd_doctor(cfg, args) -> None:
         print(f"  [{'ok' if ok else '!!'}] {label}" + ("" if ok else f"  -> {hint}"))
 
     print("Batsy doctor")
-    if cfg.get("brain.engine") == "claude":
-        check("Claude API key", bool(os.environ.get("ANTHROPIC_API_KEY")), f"add ANTHROPIC_API_KEY to {CONFIG_DIR / 'env'}")
-        print(f"  model: {cfg.get('claude.model')} (effort {cfg.get('claude.effort')})")
-    else:
-        import json
-        import urllib.request
+    import json
+    import urllib.request
 
-        try:
-            with urllib.request.urlopen(cfg.get("local.url") + "/api/tags", timeout=3) as r:
-                names = [m["name"] for m in json.loads(r.read()).get("models", [])]
-            check(f"local model {cfg.get('local.model')} (Ollama)", any(n.startswith(cfg.get("local.model")) for n in names),
-                  f"ollama pull {cfg.get('local.model')}")
-        except Exception:
-            check("Ollama running", False, "sudo systemctl enable --now ollama")
-        check("Claude Code for 'ask Claude' (optional, uses your Pro plan)", bool(shutil.which("claude")),
-              "npm install -g @anthropic-ai/claude-code, then run claude once to log in")
+    try:
+        with urllib.request.urlopen(cfg.get("local.url") + "/api/tags", timeout=3) as r:
+            names = [m["name"] for m in json.loads(r.read()).get("models", [])]
+        check(f"local model {cfg.get('local.model')} (Ollama)", any(n.startswith(cfg.get("local.model")) for n in names),
+              f"ollama pull {cfg.get('local.model')}")
+    except Exception:
+        check("Ollama running", False, "sudo systemctl enable --now ollama")
+    from batsy import codex_adapter
+
+    ok, detail = codex_adapter.login_status()
+    check("Codex CLI", codex_adapter.available(), "install the Codex CLI")
+    check("Codex ChatGPT login", ok, detail or "run: codex login")
     try:
         import sounddevice as sd
 
@@ -339,7 +335,7 @@ def cmd_doctor(cfg, args) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "3d":  # `batsy 3d ...`: drive the 3D viewer (used by Claude Code)
+    if len(sys.argv) > 1 and sys.argv[1] == "3d":  # `batsy 3d ...`: drive the 3D viewer (used by Codex)
         import json
 
         from batsy.model3d import VIEWER, find_model
@@ -357,7 +353,7 @@ def main() -> None:
         if args[0] == "open" and VIEWER.proc:  # started from a terminal: keep the window until it's closed
             VIEWER.proc.wait()
         return
-    if len(sys.argv) > 1 and sys.argv[1] == "selftest":  # `batsy selftest [--gui --voice --claude --arduino --all]`
+    if len(sys.argv) > 1 and sys.argv[1] == "selftest":  # `batsy selftest [--gui --voice --codex --arduino --all]`
         from batsy import selftest
 
         selftest.main(sys.argv[2:])
@@ -368,7 +364,7 @@ def main() -> None:
         Config.load()
         saver.cli(sys.argv[2:])
         return
-    if len(sys.argv) > 1 and sys.argv[1] == "doc":  # `batsy doc ...`: document tools (used by Claude Code)
+    if len(sys.argv) > 1 and sys.argv[1] == "doc":  # `batsy doc ...`: document tools (used by Codex)
         from batsy import docs
 
         Config.load()
