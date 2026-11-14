@@ -62,10 +62,12 @@ class Routines:
         if self.capturing and not (MORNING.fullmatch(n) or NIGHT.fullmatch(n)):
             return self._capture_answer(n)
         self.capture = None
-        if MORNING.fullmatch(n):
+        # "good night uh sorry", "good morning my kids are ready": the greeting first, then anything
+        short = len(n.split()) <= 8
+        if MORNING.fullmatch(n) or short and MORNING.match(n) and n.startswith(("good morning", "morning")):
             self.morning()
             return True
-        if NIGHT.fullmatch(n):
+        if NIGHT.fullmatch(n) or short and re.match(r"(?:that'?s a |a )?(good ?night|night night|nighty night)\b", n):
             self.night()
             return True
         for name, spec in custom_routines(self.cfg).items():
@@ -96,12 +98,18 @@ class Routines:
         have = f" You already have: {'; '.join(i['text'].rstrip('.!') for i in already)}." if already else ""
         self.app._reply(f"Good night!{have} Anything you have on {day_name(target)}?")
         self.capture = {"date": target, "until": time.time() + 120, "count": 0}
+        from batsy import home
+
+        home.off_after_conversation(self.app)  # lights off once this whole good-night talk is over
 
     def _capture_answer(self, n: str) -> bool:
         cap = self.capture
         if NO_MORE.match(n) and len(n.split()) <= 6:
             self.capture = None
             self.app._reply("Okay. Sleep well." if cap["count"] == 0 else "All saved. Sleep well.")
+            from batsy import home
+
+            home.off_when_done_speaking(self.app)  # the good-night talk is over: lights off right after this
             return True
         get_store().add_agenda(cap["date"].isoformat(), self.app.last_raw_text or n)
         cap["count"] += 1

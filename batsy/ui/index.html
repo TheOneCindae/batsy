@@ -27,6 +27,36 @@
   </div>
 </section>
 
+<section id="showcase" hidden>
+  <header><h1>Batsy <span>what I can do</span></h1><p class="meta"><i class="rec"></i><span class="up">live</span></p></header>
+  <div class="live">
+    <div class="dial">
+      <svg viewBox="0 0 240 240" aria-hidden="true">
+        <defs>
+          <linearGradient id="heat" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0" stop-color="#ffc20e"/><stop offset=".6" stop-color="#ff9a1f"/><stop offset="1" stop-color="#ff5c4d"/>
+          </linearGradient>
+          <radialGradient id="glow"><stop offset="0" stop-color="var(--heat)" stop-opacity=".28"/><stop offset="1" stop-color="var(--heat)" stop-opacity="0"/></radialGradient>
+        </defs>
+        <circle class="halo" cx="120" cy="120" r="118" fill="url(#glow)"/>
+        <g class="ticks"></g>
+        <path class="track" d=""/>
+        <path class="value" d=""/>
+        <path class="limit" d=""/>
+        <g class="sweep"><line x1="120" y1="120" x2="120" y2="22"/></g>
+      </svg>
+      <div class="read"><b class="t">--</b><small>°C</small><p class="what">CPU package</p><p class="hot"></p></div>
+    </div>
+    <svg class="trace" viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true">
+      <line class="lim" x1="0" x2="300"/><path class="area"/><path class="line"/>
+    </svg>
+    <p class="trace-label"><span>Last 90 seconds</span><span class="range"></span></p>
+    <div class="cores"></div>
+    <dl class="chips"></dl>
+  </div>
+  <ol class="tiles"></ol>
+</section>
+
 <p id="subtitle"></p>
 
 <section id="saver" hidden>

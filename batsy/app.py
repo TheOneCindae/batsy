@@ -15,7 +15,7 @@ from batsy import safety, spotify
 from batsy import images
 from batsy.overlay import Overlay
 from batsy.routines import Routines
-from batsy import apps, calc, instant, lifecycle, model3d, system
+from batsy import apps, calc, home, instant, lifecycle, model3d, system
 from batsy.learner import Automator, Learner
 from batsy.learning import ACTION, NEGATIVE, SkillBook, codex_cli
 from batsy.vocab import get_vocab
@@ -49,6 +49,24 @@ FOR_BATSY = re.compile(
 CLOSE_CAMERA = re.compile(r"\b(close|turn off|stop|hide|shut|exit)\b.*\b(camera|webcam|looking)\b|^stop looking$")
 
 
+FILLER_WORDS = re.compile(r"^(?:(?:uh|um|umm|hmm|mm|mmm|mm hmm|mhm|ah|oh|okay|ok|so|yeah|yes)\s+)+|"
+                     r"(?:\s+(?:uh|um|umm|hmm|mm|mmm|mm hmm|mmhmm|mhm|ah|okay|ok|so|or so|yeah|right))+$")
+
+
+FILLER_ONLY = re.compile(r"^(?:\s*(?:u+h+|u+m+|h+m+|m+|m+h+m+|m+ ?h+m+|mh+m+|a+h+|o+h+|h+u+h+|e+h+|e+r+m*|hm+m*|ugh|"
+                         r"mmhmm|uhhuh|uh huh|uh oh|yeah|okay|ok|so|um+ yeah|oh okay))+\s*$")
+
+
+def is_filler(text: str) -> bool:
+    """"Uhh", "mmm", "mmhmm hmm", "uh yeah": noises, not a request."""
+    return bool(FILLER_ONLY.match(_norm(text))) if text.strip() else True
+
+
+def _strip_fillers(n: str) -> str:
+    """"turn off the light mm hmm" -> "turn off the light": noises around a command mustn't break it."""
+    return FILLER_WORDS.sub("", n).strip() or n
+
+
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9' ]", "", text.lower())).strip()
 
@@ -64,6 +82,7 @@ class Batsy:
 
         self.brain = LocalBrain(cfg, self.registry)
         self.turn_lock = threading.Lock()
+        self.local_busy = 0  # local commands running right now (the tour, a search): the kill word listens then
         self.confirm_handler = self._confirm_console
         self.confirm_request: dict | None = None
         self.ears = None
@@ -110,7 +129,7 @@ class Batsy:
             model3d.VIEWER.host = self._host_3d
             self.overlay.on_viewer_event = self._viewer_event
             self.overlay.on_dock_open = self._dock_clicked
-            self.overlay.on_stop = self.end_conversation  # "~" pressed in the overlay
+            self.overlay.on_stop = lambda: self.kill("~ in the overlay")
             self.speaker.on_idle = lambda: self.overlay.send("quiet")  # stopped talking: stop showing "Speaking"
         self._turn_markers: list[tuple[str, str]] = []
         self.saver_on = False
@@ -175,6 +194,12 @@ class Batsy:
 
     def _dock_clicked(self) -> None:
         """The standby bat was clicked: open up and listen, as if you'd said "Batsy"."""
+        log.info("listening without the wake word (bat clicked / push-to-talk key)")
+        self.pushed = True  # counts as saying "Batsy": whatever you say next is for Batsy
+        self.conversation_ended = 0  # a press right after "stop" still listens
+        self.speaker.stop()
+        self.speaker.unhush()
+        self.speaker.chime()
         self.overlay.listen(fresh=True)
         self.listen_requested.set()
 
@@ -209,10 +234,34 @@ class Batsy:
         self._reply("I don't have anything open to close.")
         return True
 
+    def kill(self, source: str) -> None:
+        """The kill switch ("stop", "Batsy, stop", Shift+`, "~"): silent at once, then whatever is in progress is
+        cancelled and gets a few seconds to stop safely. Nothing it says meanwhile is spoken."""
+        self.speaker.hush(self.cfg.get("voice.kill_hush_seconds"))  # first, before anything that could be slow
+        log.info("kill switch (%s)", source)
+        self.end_conversation()
+        threading.Thread(target=self._after_kill, daemon=True, name="kill").start()
+
+    def busy(self) -> bool:
+        return self.turn_lock.locked() or self.local_busy > 0 or not self.speaker.idle()
+
+    def _after_kill(self) -> None:
+        grace = self.cfg.get("voice.kill_grace_seconds")
+        end = time.time() + grace
+        while time.time() < end and (self.turn_lock.locked() or self.local_busy > 0):
+            time.sleep(0.1)
+        if self.turn_lock.locked() or self.local_busy > 0:
+            log.warning("kill switch: still finishing after %ss (silenced; it will not speak)", grace)
+        else:
+            log.info("kill switch: everything stopped")
+
     def end_conversation(self) -> None:
         """"~" in the overlay, "stop", or `batsy stop`: stop talking, cancel what's being worked on, don't listen
         for a follow-up, and close the screen."""
+        self.speaker.stop()  # silence first: cancelling the rest can take a moment
         self.conversation_ended = time.time()
+        if self.ears is not None:
+            self.ears.cancel.set()  # cut off a recording in progress
         abort = getattr(self, "_turn_abort", None)
         if abort is not None:
             abort.set()
@@ -563,7 +612,12 @@ class Batsy:
     def local_command(self, text: str) -> bool:
         """Handle common phrases instantly, without any AI. Returns True if handled (and logs how)."""
         t0, self._route = time.time(), "command"
-        handled = self._local_command(text)
+        self.speaker.unhush()  # a new request: Batsy may speak again ("stop" itself hushes again at once)
+        self.local_busy += 1
+        try:
+            handled = self._local_command(text)
+        finally:
+            self.local_busy -= 1
         if handled:
             self.last_turn = time.time()
             self.learner.record(text, _norm(text), self._route, time.time() - t0)
@@ -572,12 +626,22 @@ class Batsy:
     def _local_command(self, text: str) -> bool:
         from batsy.tools import screen
 
-        n = _norm(text)
+        n = _strip_fillers(_norm(text))
         self.last_raw_text = text.strip()
         if n in STOP_WORDS:
-            self.end_conversation()
+            self.kill(f"said {n!r}")
             return True
         if self._self_command(n):
+            return True
+        from batsy import showcase
+
+        if showcase.handle(self, n):  # "show what you can do": the narrated tour on a live dashboard
+            self._route = "command"
+            return True
+        said = home.handle(self, n)  # "turn on the light", "night mode": the ESP32 on the network, instantly
+        if said is not None:
+            self._route = "instant"
+            self._reply(said)
             return True
         said = system.handle(self, n)  # terminal, system update, restart / shut down: built in, never improvised
         if said is not None:
@@ -745,6 +809,13 @@ class Batsy:
         self.ears = Ears(self.cfg)
         self.stt = Transcriber(self.cfg, self.ears.model)
         self.voiceprint = VoicePrint(self.cfg)
+        if self.cfg.get("voice.kill_word"):  # "Batsy, stop" even while the voice loop is busy with something
+            try:
+                from batsy.voice.killword import KillWord
+
+                KillWord(self.ears, self.cfg.get("voice.wake_words"), self.busy, self.kill).start()
+            except Exception:
+                log.exception("kill word unavailable")
         ControlServer(self).start()
         self.ears.start()
         self.speaker.say(lifecycle.started())  # "Batsy online." or "I'm back. Updated: 23 files changed."
@@ -761,6 +832,9 @@ class Batsy:
                     self.listen_requested.clear()
                     self.speaker.wait_idle()
                     follow_up = True
+                    if getattr(self, "pushed", False):  # the key / the bat: like having said "Batsy"
+                        self.pushed = False
+                        wake_only = True
                 if pending_text is not None:
                     text, pending_text = pending_text, None
                 elif follow_up and time.time() - getattr(self, "conversation_ended", 0) < 5:
@@ -778,9 +852,11 @@ class Batsy:
                             (30 if screen.camera_pid() or model3d.VIEWER.active() else None) or \
                             self.cfg.get("voice.follow_up_seconds")  # live camera / 3D model: keep talking to it
                     was_wake_only, wake_only = wake_only, False
+                    started = time.time()
                     audio = self._record(wait, self.ears.preroll(0.3), fresh=False,
                                          min_speech=0.6 if was_wake_only else 0.0)
-                    if audio is None or not self.voiceprint.is_owner(audio):
+                    if audio is None or getattr(self, "conversation_ended", 0) > started or \
+                            not self.voiceprint.is_owner(audio):
                         self.overlay.done()
                         continue
                     self.overlay.think()  # you've stopped talking: the screen shows it's working straight away
@@ -796,7 +872,7 @@ class Batsy:
                     ignore = NOISE_TRANSCRIPTS if awaiting or asked else END_FOLLOWUP | NOISE_TRANSCRIPTS
                     for_me = text.rstrip().endswith("?") or FOR_BATSY.match(_norm(text)) or \
                         (model3d.VIEWER.active() and model3d.parse(_norm(text)) is not None)  # "rotate it", "top view"
-                    if _norm(text) in ignore or not (awaiting or asked or for_me):
+                    if _norm(text) in ignore or is_filler(text) or not (awaiting or asked or for_me):
                         log.info("follow-up ignored: %r", text)
                         self.overlay.done()
                         continue
@@ -909,17 +985,18 @@ class Batsy:
         return False
 
     def _wake_training(self, n: str) -> bool:
-        """"Train my wake word": record you saying "Batsy" a few times, then tune the keyword spotter to you."""
+        """"Train my wake word": record you saying "Batsy" 8 times and build a wake model from your own voice."""
         if not re.fullmatch(r"(train|learn|calibrate|tune)( my| the| your)? wake ?word|learn how i say (your name|batsy)", n):
             return False
-        from batsy.voice import wake
+        from batsy.voice import personal, wake
 
-        if not wake.available() or self.ears is None:
-            self._reply("I don't have the keyword spotting model, so there's nothing to train.")
-            return True
+        if self.ears is None:
+            return False
         clips = []
         self.speaker.say("After each beep, say Batsy, the way you normally would.")
-        for i in range(5):
+        takes = ["Again.", "Once more.", "And again.", "Again, a bit faster.", "Again, a bit slower.", "Again.",
+                 "Last one."]
+        for i in range(8):
             self.speaker.wait_idle()
             self.speaker.chime()
             self.ears.drain()
@@ -927,19 +1004,26 @@ class Batsy:
             if audio is not None:
                 clips.append(audio)
                 wake.save_sample(audio, "real", "train")
-            if i < 4:
-                self.speaker.say(["Again.", "Once more.", "And again.", "Last one."][i])
-        if len(clips) < 3:
+            if i < 7:
+                self.speaker.say(takes[i])
+        if len(clips) < 5:
             self._reply("I didn't hear enough. Say train my wake word to try again.")
             return True
-        self._reply("Got it. Tuning myself to your voice, give me a minute.")
+        self._reply("Got it. Learning how you say it, give me a minute.")
 
         def tune():
-            r = wake.tune(clips)
-            self.ears.spotter = wake.Spotter()
-            self._reply(f"Done. I now catch {r['caught']} of your {r['of']} Batsys"
-                        + (f", with {r['false']} false alarms in {r['negatives']} saved noises." if r["negatives"]
-                           else "."))
+            try:
+                r = personal.train(clips)
+            except ValueError:
+                self._reply("Those recordings weren't clear enough. Try again somewhere quieter.")
+                return
+            self.ears.load_personal()
+            if r["enabled"]:
+                self._reply(f"Done. I recognise {r['caught']} of your {r['of']} Batsys, and none of the "
+                            f"{r['checked']} saved false alarms.")
+            else:
+                self._reply(f"I could only tell {r['caught']} of your {r['of']} apart from videos and noise, so I'm "
+                            "not switching it on. Try again in a quiet room.")
 
         threading.Thread(target=tune, daemon=True, name="wake-tune").start()
         return True
@@ -956,19 +1040,22 @@ class Batsy:
             vp.forget()
             self._reply("Okay, I'll answer any voice again.")
             return True
-        prompts = ["After the beep, tell me what you did today, for a few seconds.",
-                   "Now say something you'd usually ask me.",
-                   "Last one. Count from one to ten."]
+        # five longer takes in different styles: three short clips couldn't tell you apart from a YouTuber
+        prompts = ["After the beep, tell me what you did today, for about ten seconds.",
+                   "Now say three things you'd usually ask me.",
+                   "Count from one to fifteen.",
+                   "Tell me about something you're building.",
+                   "Last one. Say Batsy, then any question, like you normally would."]
         clips = []
         for prompt in prompts:
             self.speaker.say(prompt)
             self.speaker.wait_idle()
             self.speaker.chime()
             self.ears.drain()
-            audio = self.ears.record_utterance(start_timeout=8)
-            if audio is not None and audio.size >= 16000 * 2:
+            audio = self.ears.record_utterance(start_timeout=8, end_silence=1.5, max_seconds=20)
+            if audio is not None and audio.size >= 16000 * 3:
                 clips.append(audio)
-        if len(clips) < 2:
+        if len(clips) < 3:
             self._reply("I didn't hear enough to learn your voice. Say learn my voice to try again.")
             return True
         vp.enroll(clips)
@@ -1017,7 +1104,11 @@ class Batsy:
 
         from batsy.voice import wake
 
-        if self.ears.wake_source == "kws":  # the dedicated spotter is precise: answer at once, no check
+        if self.ears.wake_source == "personal":  # matched your own recordings: just make sure it's your voice
+            preroll = self.ears.preroll(2.0)
+            if not self.voiceprint.is_owner(np.frombuffer(b"".join(preroll), dtype=np.int16), strict=True):
+                return None
+        elif self.ears.wake_source == "kws":  # the dedicated spotter is precise: answer at once, no check
             preroll = self.ears.preroll(2.0)
         else:
             # Vosk often fires on similar sounds. Check the last couple of seconds with the real recogniser
@@ -1034,11 +1125,15 @@ class Batsy:
                 return None
         self.speaker.stop()
         self.speaker.chime()
+        started = time.time()
         audio = self._record(5, preroll, fresh=True, min_speech=1.0)  # don't stop at the pause after "Batsy"
+        if getattr(self, "conversation_ended", 0) > started:  # stopped while recording: drop it
+            self.overlay.hide()
+            return None
         if audio is None:
             # they said just the wake word and waited; check the pre-roll really contained it
             audio = np.frombuffer(b"".join(preroll), dtype=np.int16)
-        if not self.voiceprint.is_owner(audio):
+        if not self.voiceprint.is_owner(audio, strict=True):  # waking up: a video / TV voice mustn't pass
             self.overlay.hide()
             return None
         self.overlay.think()  # you've stopped talking: the screen shows it's working straight away
@@ -1056,7 +1151,7 @@ class Batsy:
             else:
                 rest = text
             log.info("wake word heard earlier; full transcript %r, command %r", text, rest)
-        if _norm(rest) in NOISE_TRANSCRIPTS:
+        if _norm(rest) in NOISE_TRANSCRIPTS or is_filler(rest):
             rest = ""
         if rest.strip():
             self.overlay.heard(rest.strip())
@@ -1158,6 +1253,10 @@ class ControlServer(threading.Thread):
                 finally:
                     send({"yes": bool(yes)})
                 return
+            if req.get("listen"):  # `batsy listen` (the push-to-talk key): listen now, no wake word needed
+                self.app._dock_clicked()
+                send({"done": True})
+                return
             text = req.get("text", "").strip()
             if text:
                 self.app.overlay.heard(text)  # typed turns are their own exchange on screen too
@@ -1170,6 +1269,20 @@ class ControlServer(threading.Thread):
                 log.exception("socket turn failed")
                 send({"say": f"Error: {e}"})
             send({"done": True})
+
+
+def listen_now() -> bool:
+    """Make the running daemon listen right away, as if you'd said "Batsy". False if it isn't running."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(str(SOCKET_PATH))
+    except OSError:
+        return False
+    with s, s.makefile("rw") as f:
+        f.write(json.dumps({"listen": True}) + "\n")
+        f.flush()
+        f.readline()
+    return True
 
 
 def ask_daemon(text: str, speak: bool = False) -> bool:
