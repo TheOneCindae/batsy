@@ -151,6 +151,15 @@ Batsy says "Got it", then works out **which repo or folder it is**. It matches w
 
 **Mac → Batsy:** right-click a file → **Share → Tailscale** → this laptop, or run `tailscale file cp FILE <this laptop's name>:`. Batsy collects it into `~/Batsy/inbox`, puts it on screen and says *"datasheet.pdf just arrived. Want me to open it?"* (answer "yes", "the second one" or "no"). PDFs, documents and images are read in straight away, so "summarise what I just sent" or "circle the pin numbers in the file I sent" work. STL, 3MF and STEP files open in the 3D viewer. If you're away from the laptop it just announces the file and shows a notification. Files dropped into the inbox any other way (LocalSend, `scp`) are noticed too.
 
+**From friends, split by who sent it:** every sender has a folder, `~/Batsy/inbox/<name>/`. Taildrop only works between your own devices, so whatever it delivers goes in your folder. Anyone else on the tailnet opens `http://workstation:8765` (a page with a file picker that works on phones too) or runs `curl -T FILE http://workstation:8765/`. Batsy asks Tailscale who is connecting (`tailscale whois`), so the folder can't be faked. Logins missing from `[files.senders]` are refused:
+```toml
+[files.senders]               # Tailscale login -> folder name
+"cvineetjonathan@gmail.com" = "Jonathan"
+"rehaanjohn@passkey" = "Rehaan"
+"rkarancindae@gmail.com" = "Karan"
+```
+Batsy then says *"Karan sent wiring.pdf"*. Also: "what did Rehaan send me?", "show me files from Karan", "open Karan's folder".
+
 **Batsy → Mac:** "send this to my Mac" (the file Batsy just made, opened, found or received) · "send the marked-up PDF to my Mac" · "send my arduino sketch for the servo to my Mac" · "send the portfolio project to my Mac" (a folder is zipped first, without `.git`, `node_modules` or virtualenvs). It arrives in the Mac's Downloads folder. Also: "what's in my inbox?", "open my inbox", "open the file I just sent".
 
 **One-time setup on Fedora:**

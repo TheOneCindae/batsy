@@ -51,6 +51,8 @@ class Speaker:
         self.piper = None
         self.engine = "none"
         self.chime_path = DATA_DIR / "chime.wav"
+        self._lock = threading.Lock()  # stop() and starting the next sentence never interleave
+        self.hushed_until = 0.0  # the kill switch: nothing is spoken until then (or until you ask something new)
         self.on_idle = None  # called when the last queued sentence has finished playing (or speech was stopped)
         if enabled:
             self._init_engine()
@@ -82,16 +84,32 @@ class Speaker:
 
     # --- public API -------------------------------------------------------
     def say(self, text: str) -> None:
+        if time.time() < self.hushed_until:  # killed: whatever is still finishing up stays silent
+            log.info("hushed: %s", text)
+            return
         log.info("say: %s", text)
         if self.enabled:
             self.q.put((self.generation, text))
+
+    def hush(self, seconds: float) -> None:
+        """The kill switch: silent now, and anything said for the next few seconds is dropped."""
+        self.hushed_until = time.time() + seconds
+        self.stop()
+
+    def unhush(self) -> None:
+        """You asked for something new: Batsy may speak again."""
+        self.hushed_until = 0.0
 
     def chime(self) -> None:
         if self.enabled and self.cfg.get("voice.chime") and self.player:
             subprocess.Popen([*self.player, str(self.chime_path)], stderr=subprocess.DEVNULL)
 
     def stop(self) -> None:
-        self.generation += 1
+        with self._lock:  # silence first: the sentence playing now dies before anything else is tidied up
+            self.generation += 1
+            proc = self.proc
+            if proc and proc.poll() is None:
+                proc.kill()
         try:
             while True:
                 self.q.get_nowait()
@@ -104,9 +122,6 @@ class Speaker:
                 self._discard(path)
         except (queue.Empty, AttributeError):
             pass
-        proc = self.proc
-        if proc and proc.poll() is None:
-            proc.kill()
         self._maybe_idle()
 
     def _maybe_idle(self) -> None:
@@ -166,10 +181,11 @@ class Speaker:
         self.q.task_done()
 
     def _run(self, argv: list[str], gen: int) -> None:
-        if gen != self.generation:
-            return
-        self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.proc.wait()
+        with self._lock:  # a stop() between the check and the start would miss this sentence
+            if gen != self.generation:
+                return
+            proc = self.proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc.wait()
 
     def _synth(self, text: str) -> str:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:

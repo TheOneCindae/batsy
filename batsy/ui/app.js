@@ -3,6 +3,7 @@
 import {makeSky} from './sky.js';
 import {Viewer} from './viewer.js';
 import {renderSaver, tickClock} from './saver.js';
+import {Showcase} from './showcase.js';
 
 const $ = s => document.querySelector(s);
 const send = ev => console.log('@@batsy ' + JSON.stringify(ev));
@@ -12,6 +13,7 @@ const viewerOnly = params.get('mode') === 'viewer';
 
 const sky = makeSky($('#sky'));
 const viewer = makeViewer();
+const showcase = new Showcase($('#showcase'));
 
 function makeViewer() {
   try {
@@ -27,20 +29,23 @@ function makeViewer() {
 }
 const ui = {
   state: 'idle', status: '', statusT0: 0, partial: '', image: null, card: null,
-  camera: false, model: false, saver: false, shown: false, lastInput: 0, mouse0: null,
+  camera: false, model: false, saver: false, showcase: false, shown: false, lastInput: 0, mouse0: null,
   turns: [], turnOpen: false,  // the conversation: [{you, batsy}], oldest first; the last one is happening now
 };
 const MAX_TURNS = 4;
 const STATE_LABEL = {listen: 'Listening', think: 'Thinking', speak: 'Speaking'};
 
 // --- layout: where the voice line sits, and which mode the screen is in -----------------------------------------
-function hasMedia() { return !!(ui.image || ui.card || ui.camera || ui.model); }
+function hasMedia() { return !!(ui.image || ui.card || ui.camera || ui.model || ui.showcase); }
 
 function layout() {
   const media = hasMedia() && !ui.saver;
   body.classList.toggle('media', media);
   body.classList.toggle('model', ui.model && !ui.camera && !ui.saver);
   body.classList.toggle('saver', ui.saver);
+  body.classList.toggle('showcase', ui.showcase && !ui.saver);
+  $('#showcase').hidden = !ui.showcase || ui.saver;
+  $('#stage').hidden = ui.showcase;
   $('#media').hidden = !(ui.image || ui.camera) || (ui.model && !ui.camera);
   $('#card').hidden = !ui.card || ui.camera || ui.model;
   viewer.show(ui.model && !ui.camera && !ui.saver);
@@ -167,13 +172,13 @@ const handlers = {
   },
   hidden() {
     for (const el of [$('#world'), $('#flybat')]) el.getAnimations().forEach(a => a.cancel());
-    ui.shown = false; ui.saver = false; body.classList.remove('on'); sky.target.fade = 0;
+    ui.shown = false; ui.saver = false; ui.showcase = false; body.classList.remove('on'); sky.target.fade = 0;
     sky.u.uFade.value = 0; $('#saver').hidden = true; setState('idle'); layout();
   },
   listen(m) {
     leaveSaver();
     if (m.fresh) {
-      Object.assign(ui, {turns: [], turnOpen: false, partial: '', card: null, status: ''});
+      Object.assign(ui, {turns: [], turnOpen: false, partial: '', card: null, status: '', showcase: false});
       if (!ui.camera) ui.image = null;
     }
     setState('listen'); layout();
@@ -200,8 +205,8 @@ const handlers = {
     clearTimeout(ui.quietTimer);
     ui.quietTimer = setTimeout(() => { if (ui.state === 'speak' && !ui.status) setState('idle'); }, 600);
   },
-  image(m) { leaveSaver(); ui.image = m.url; showImage(m.url, m.caption); layout(); },
-  card(m) { leaveSaver(); ui.card = [m.title, m.text]; renderCard(m.title, m.text); layout(); },
+  image(m) { leaveSaver(); ui.showcase = false; ui.image = m.url; showImage(m.url, m.caption); layout(); },
+  card(m) { leaveSaver(); ui.showcase = false; ui.card = [m.title, m.text]; renderCard(m.title, m.text); layout(); },
   camera(m) {
     ui.camera = !!m.on;
     $('#media').classList.toggle('live', ui.camera);
@@ -219,6 +224,15 @@ const handlers = {
     if (ui.model) { ui.image = null; ui.card = null; }
     layout();
   },
+  showcase(m) {
+    leaveSaver();
+    ui.showcase = !!m.on;
+    if (ui.showcase) { ui.image = null; ui.card = null; showcase.start(m); }
+    layout();
+  },
+  showcase_focus(m) { showcase.focus(+m.i); },
+  showcase_seen(m) { showcase.seen(+m.i); },
+  showcase_stats(m) { if (ui.showcase) showcase.stats(m); },
   model_state(m) { viewer.setState(m).catch(e => console.error('3d', e)); },
   model_orbit(m) { viewer.orbit(m.azimuth, m.elevation); },
   model_zoom(m) { viewer.zoom(m.factor); },
@@ -329,6 +343,7 @@ function loop(now) {
   if (ui.shown || viewerOnly) {
     if (!viewerOnly) followSignal(sky.frame(dt, now));
     viewer.frame(dt, now);
+    if (ui.showcase) showcase.frame(dt);
     if (now - lastSecond > 1000) { lastSecond = now; renderStatus(); if (ui.saver) tickClock($('#saver')); }
     requestAnimationFrame(loop);
   } else {

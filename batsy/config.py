@@ -70,6 +70,11 @@ DEFAULTS = {
         "inbox": "~/Batsy/inbox",
         "taildrop": True,             # collect files sent to this laptop with Taildrop
         "devices": {"mac": "c"},      # what "my Mac" / "my iPad" / "my phone" mean: names from `tailscale status`
+        # Who may send you files, by Tailscale login -> the inbox folder they land in. You're always allowed.
+        "senders": {},
+        "receive": True,              # accept files from senders at http://<this laptop>:<receive_port>
+        "receive_port": 8765,
+        "receive_max_mb": 4096,
     },
     "spotify": {
         "client_id": "",        # from developer.spotify.com (see README)
@@ -104,6 +109,9 @@ DEFAULTS = {
         "dock": True,                 # a small Batman bat in the top-right corner while the overlay is closed
         "renderer": "auto",           # auto | web (GPU, line + particles, 3D inside) | classic (plain Qt painting)
     },
+    "home": {
+        "lights": {},                 # name -> ESP32 address, e.g. {"light": "http://192.168.1.70"} (GET /on, /off)
+    },
     "weather": {
         "city": "Chennai",            # "what's the weather" with no place named
     },
@@ -123,19 +131,23 @@ DEFAULTS = {
         # from 11/21 to 15/21 with nothing invented in room noise; 1.5+ starts "hearing" them in silence.
         "hotwords": ["Batsy", "Claude", "Claude Code", "GitHub", "VS Code", "Python", "API", "JSON", "Ollama", "Llama",
                      "Arduino", "ESP32", "GPIO", "Docker", "Kubernetes", "Fedora", "npm", "Bluetooth", "repo", "commit",
-                     "sketch", "serial monitor"],
+                     "sketch", "serial monitor", "night mode"],
         "hotwords_score": 1.0,       # keep at 1.0; higher invents hotwords out of background noise
         # Everyday vocabulary to expect and to repair after recognition (batsy/lexicon.py): your project names are
         # always added. Drop a domain you don't use.
         "lexicon": ["developer", "3d", "student"],
         "speaker_model": "wespeaker_en_voxceleb_resnet34_LM.onnx",  # after "learn my voice", only you trigger Batsy
-        "speaker_match": 0.5,        # 0..1; raise if others still trigger it, lower if it ignores you
+        "speaker_match": 0.5,
+        "speaker_match_wake": 0.75,  # stricter when waking up: videos / TV scored 0.55-0.74, you 0.79+        # 0..1; raise if others still trigger it, lower if it ignores you
         "whisper_model": "base.en",  # fast on CPU; small.en is more accurate but slower
         "end_silence": 0.7,          # seconds of quiet that mean you've finished talking
         "tts_engine": "auto",  # auto | piper | espeak
         "piper_voice": "en_GB-alan-medium",
         "follow_up_seconds": 6,
         "barge_in": True,
+        "kill_word": True,  # "Batsy, stop" works at any moment, even mid-action (batsy/voice/killword.py)
+        "kill_grace_seconds": 5,  # after a kill, how long actions get to stop safely (in silence)
+        "kill_hush_seconds": 20,  # after a kill, nothing is spoken for this long unless you ask something new
         "input_device": None,  # sounddevice device name/index; None = system default
         "chime": True,
     },
